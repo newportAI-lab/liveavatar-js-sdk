@@ -1,6 +1,6 @@
 # Facemarket Live Avatar SDK User Manual (v1.0.0)
 
-This manual corresponds to the npm package **`@sanseng/livekit-ws-sdk` version 1.0.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -33,7 +33,7 @@ The SDK distinguishes between two mutually exclusive modes via `ClientOptions.co
 **Initialization**
 
 ```ts
-import { createClient } from '@sanseng/livekit-ws-sdk';
+import { createClient } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: {
@@ -77,7 +77,7 @@ const client = createClient({
 **Initialization**
 
 ```ts
-import { createClient } from '@sanseng/livekit-ws-sdk';
+import { createClient } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: {
@@ -135,13 +135,13 @@ client.setAuthToken('jwt-or-business-token');
 ### 3.1 Installation
 
 ```bash
-npm install @sanseng/livekit-ws-sdk
+npm install @sanseng/liveavatar-js-sdk
 ```
 
 ### 3.2 Minimal Workflow (Auth Example)
 
 ```ts
-import { createClient } from '@sanseng/livekit-ws-sdk';
+import { createClient } from '@sanseng/liveavatar-js-sdk';
 
 const el = document.getElementById('avatar');
 if (!el) throw new Error('container missing');
@@ -418,7 +418,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ## 8. Full Usage Example
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/livekit-ws-sdk';
+import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
 
 async function main() {
   const container = document.getElementById('avatar');
@@ -636,7 +636,7 @@ Data structure: `PerformanceMetricRecord` (contains `metric`, `durationMs`, `sta
 ### 12.2 Custom Reporting
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/livekit-ws-sdk';
+import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: { type: 'auth', config: { avatarId: 'demo' } },

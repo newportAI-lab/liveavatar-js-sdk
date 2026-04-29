@@ -14,7 +14,7 @@ For detailed integration guides and API references, please refer to the:
 The SDK includes a built-in low-intrusion performance monitor to simplify integration with observability systems (SkyWalking/OpenTelemetry/custom reporters).
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/livekit-ws-sdk';
+import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: {
