@@ -1,4 +1,4 @@
-[SDK用户手册](./SDK_使用手册.md)|[SDK_User_Manual](./SDK_User_Manual.md)
+[SDK_User_Manual](./SDK_User_Manual.md) | [SDK用户手册](./SDK_使用手册.md)
 # 🤖 Real-time Audio-Video Interaction SDK User Guide
 
 This SDK provides an integrated communication solution combining **LiveKit (RTC)** , specifically designed for digital human conversations, real-time voice interactions, and similar scenarios. It handles complex underlying logic such as media track synchronization, audio capture, streaming text parsing, and automatic reconnection.
