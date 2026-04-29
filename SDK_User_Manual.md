@@ -1,6 +1,6 @@
-# Real-time A/V Interactive SDK User Manual (v1.0.0)
+# Facemarket Live Avatar SDK User Manual (v1.0.0)
 
-This manual corresponds to the npm package **`@sanseng/livekit-ws-sdk` version 1.0.0**. The SDK is built on **LiveKit Client** and encapsulates digital human audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/livekit-ws-sdk` version 1.0.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -23,11 +23,11 @@ The SDK distinguishes between two mutually exclusive modes via `ClientOptions.co
 
 ### 2.1 Direct Mode
 
-**Description** The caller directly provides the LiveKit `sfuUrl` and `clientToken` within the constructor parameters. The SDK does not pull room configurations via HTTP.
+**Description** The caller directly provides the LiveKit `sfuUrl` and `userToken` within the constructor parameters. The SDK does not pull room configurations via HTTP.
 
 **Prerequisites**
 
-- A non-empty `sfuUrl` (LiveKit WebSocket URL) and `clientToken` (Room Access Token) must be provided.
+- A non-empty `sfuUrl` (LiveKit WebSocket URL) and `userToken` (Room Access Token) must be provided.
 - If the business logic requires changing the room or token during runtime, the new configuration must be injected via `updateConnectionConfig` before the next reconnection (refer to Behavioral Notes).
 
 **Initialization**
@@ -40,7 +40,7 @@ const client = createClient({
     type: 'direct',
     config: {
       sfuUrl: 'wss://your-livekit-host',
-      clientToken: 'your-room-token',
+      userToken: 'your-room-token',
     },
   },
   video: {
@@ -121,9 +121,9 @@ client.setAuthToken('jwt-or-business-token');
 
 | Feature | Direct Mode | Auth Mode |
 | :--- | :--- | :--- |
-| **Config Source** | `sfuUrl` and `clientToken` from constructor parameters. | `ConnectionConfig` returned from HTTP interface. |
+| **Config Source** | `sfuUrl` and `userToken` from constructor parameters. | `ConnectionConfig` returned from HTTP interface. |
 | **Business HTTP Required** | No (Optional `http` config if using other HTTP capabilities). | **Yes** (required for auth and room config). |
-| **Required Fields** | `sfuUrl` + `clientToken` | `avatarId` + valid `authToken` (constructor or `setAuthToken`). |
+| **Required Fields** | `sfuUrl` + `userToken` | `avatarId` + valid `authToken` (constructor or `setAuthToken`). |
 | **`setAuthToken`** | Not used for resolving LiveKit connection config. | Mandatory or recommended to inject before connecting. |
 | **`updateConnectionConfig`**| Available; applies to the Direct config used in the **next** `reconnect()`. | Unavailable (throws error). |
 | **`reconnect()` Refresh** | Uses `refreshConfig()` to read Direct path config (includes updates via `replaceDirectConfig`). | Uses `refreshConfig()` to re-fetch via HTTP. |
@@ -179,7 +179,7 @@ document.getElementById('mic')?.addEventListener('click', async () => {
 const client = createClient({
   connectConfig: {
     type: 'direct',
-    config: { sfuUrl: 'wss://...', clientToken: '...' },
+    config: { sfuUrl: 'wss://...', userToken: '...' },
   },
   video: { containerElement: document.getElementById('avatar')! },
 });
@@ -244,7 +244,7 @@ await client.connect();
 | :--- | :--- | :--- |
 | `type` | `'direct'` | **Yes** |
 | `config.sfuUrl` | `string` | **Yes** |
-| `config.clientToken` | `string` | **Yes** |
+| `config.userToken` | `string` | **Yes** |
 
 **Auth Mode**
 
@@ -302,7 +302,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | Method | Description |
 | :--- | :--- |
 | `setAuthToken(token: string): void` | Sets the auth token; used by HTTP and Config components in **Auth Mode**. |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `clientToken`. **Does not affect the current session**; takes effect during the next `reconnect()` via `replaceDirectConfig`. |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `reconnect()` via `replaceDirectConfig`. |
 
 ### 6.3 Media
 
@@ -492,7 +492,7 @@ main();
 **Updating room/token in Direct Mode**:
 
 ```ts
-client.updateConnectionConfig({ sfuUrl: 'wss://new-host', clientToken: 'new-token' });
+client.updateConnectionConfig({ sfuUrl: 'wss://new-host', userToken: 'new-token' });
 await client.reconnect();
 ```
 
@@ -527,18 +527,22 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
 ## 10. FAQ
 
 **No video display or black screen**
+
 1. Verify if a valid DOM node has been passed to `video.containerElement`.
 2. Ensure `connect()` was successful and `client.isConnected === true`.
 3. Check if the `media:video:available` or at least `media:video:trackAdded` event was received (can be used to trigger loading states).
 
 **`preConnect` / `connect` failure in Auth Mode**
+
 1. Check if `http.baseURL` points to the correct environment and if `setAuthToken` was called before connecting.
 2. Enable `debug: true` to inspect the console logs and check the `code` in the `sdk:error` event.
 
 **`reconnect()` still uses old token in Direct Mode**
+
 1. Ensure `updateConnectionConfig` was called *before* `reconnect()`. This method **does not** affect the current session; it only applies to subsequent reconnection attempts.
 
 **Stuttering with Green Screen**
+
 1. Try reducing the rendering resolution of the container or switch to `renderMode: 'raw'` to verify if it is a CPU/GPU bottleneck.
 
 ---
