@@ -1,4 +1,3 @@
-
 # 实时音视频交互 SDK 使用手册（v1.0.0）
 
 本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
@@ -128,7 +127,7 @@ client.setAuthToken('jwt-or-business-token');
 | ------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | 配置来源                 | 构造参数中的 `sfuUrl`、`userToken`                                             | HTTP 接口返回的 `ConnectionConfig`                     |
 | 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                  | 是（获取鉴权与房间配置）                               |
-| 必填字段                 | `sfuUrl` + `userToken`                                                         | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
+| 必填字段                 | `sfuUrl` + `userToken`                                                          | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
 | `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                      | 必须或建议在连接前注入                                 |
 | `updateConnectionConfig` | 可用；作用于**下一次** `reconnect()` 所使用的 Direct 配置                        | 不可用（抛出错误）                                     |
 | `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新） | `refreshConfig()` 重新 HTTP 拉取                       |
@@ -203,7 +202,7 @@ await client.connect();
 - `conversation:question:sent`
 - `conversation:answer:waiting`
 - `conversation:server:message`
-- `conversation:asr:received` / `conversation:asr:streaming`
+- `conversation:asr:received` / `conversation:asr:chunk`
 - `conversation:answer:chunk`
 - `conversation:answer:completed`
 
@@ -249,7 +248,7 @@ await client.connect();
 | -------------------- | ---------- | ---- |
 | `type`               | `'direct'` | 是   |
 | `config.sfuUrl`      | `string`   | 是   |
-| `config.userToken` | `string`   | 是   |
+| `config.userToken`   | `string`   | 是   |
 
 **Auth**
 
@@ -272,10 +271,12 @@ await client.connect();
 
 ### 5.4 `audio`（`AudioOptions`）
 
-| 字段     | 说明                                                                                           |
-| -------- | ---------------------------------------------------------------------------------------------- |
-| `input`  | `{ deviceId?: string, sampleRate?: number; noiseSuppression?: boolean;}`（设备约束、采样率等） |
-| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                         |
+| 字段     | 说明                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
+| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                              |
+
+**注意**：`channelCount` 为可选，默认为 `1`。
 
 ### 5.5 `performanceMonitor`
 
@@ -360,7 +361,7 @@ await client.connect();
 ### `sdk:disconnected`
 
 - **触发时机**：任一路径断开事实导致聚合状态变化时。
-- **Payload**：运行时与 `sdk:connected` 相同结构：`{ livekit: boolean; http: boolean; all: boolean }`（与类型文件中的 `reason?` 可能不一致，以运行时负载为准）。
+- **Payload**：`{ reason?: string }`
 - **说明**：可与 `connectionSnapshot` 交叉校验。
 
 ### `sdk:error`
@@ -517,18 +518,22 @@ await client.reconnect();
 - 建议从真实视频截图中取色
 - 避免直接使用纯绿色
 - 仅支持绿色调
+- 默认值：`[0, 255, 0]`（纯绿色）
 
 2. **相似度（`similarity`）**
 
+- 默认值：`0.4`
 - 推荐从 `0.3` 开始逐步调整
 - 数值过大可能误抠除人物细节
 
 3. **绿色溢出抑制（`despillStrength`）**
 
+- 默认值：`1.15`
 - 用于减少人物边缘绿色反光
 
 4. **边缘平滑（`smoothness`）**
 
+- 默认值：`0.25`
 - 可改善头发、半透明区域的融合效果
 
 ---
@@ -595,13 +600,12 @@ await client.reconnect();
 
 ### 11.4 音频
 
-| 代码                                                                            | 说明与处理建议                          |
-| ------------------------------------------------------------------------------- | --------------------------------------- |
-| `AUDIO_CAPTURE_START_FAILED`                                                    | 麦克风启动失败；用户手势、HTTPS、权限。 |
-| `AUDIO_CAPTURE_FAILED`                                                          | 采集中断。                              |
-| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC`   | 参数与设备/协议不匹配。                 |
-| `AUDIO_INVALID_HEADER_LENGTH` / `AUDIO_INVALID_TYPE` / `AUDIO_INVALID_RESERVED` | 上行打包头部非法。                      |
-| `AUDIO_CONTROLLER_NOT_AVAILABLE`                                                | 控制器未创建或已释放。                  |
+| 代码                                                          | 说明与处理建议                    |
+| ------------------------------------------------------------- | --------------------------------- |
+| `AUDIO_CAPTURE_START_FAILED`                                  | 麦克风启动失败；用户手势、HTTPS、权限。 |
+| `AUDIO_CAPTURE_FAILED`                                        | 采集中断。                        |
+| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。           |
+| `AUDIO_CONTROLLER_NOT_AVAILABLE`                              | 控制器未创建或已释放。            |
 
 ### 11.5 摄像头
 
@@ -674,3 +678,4 @@ client.setPerformanceMetricReporter((metric) => {
 ---
 
 _文档版本与包版本一致：1.0.0。_
+

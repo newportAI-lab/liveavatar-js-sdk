@@ -198,7 +198,7 @@ await client.connect();
 - `conversation:question:sent`
 - `conversation:answer:waiting`
 - `conversation:server:message`
-- `conversation:asr:received` / `conversation:asr:streaming`
+- `conversation:asr:received` / `conversation:asr:chunk`
 - `conversation:answer:chunk`
 - `conversation:answer:completed`
 
@@ -269,8 +269,10 @@ await client.connect();
 
 | Field | Description |
 | :--- | :--- |
-| `input` | `{ deviceId?: string, sampleRate?: number; noiseSuppression?: boolean;}` (Device constraints, etc.) |
+| `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` Default values for the playback side. |
+
+**Note**: `channelCount` is optional and defaults to `1`. |
 
 ### 5.5 `performanceMonitor`
 
@@ -355,7 +357,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ### `sdk:disconnected`
 
 - **Trigger**: Dispatched when a disconnection in either path causes a change in the aggregated state.
-- **Payload**: Same structure as `sdk:connected`: `{ livekit: boolean; http: boolean; all: boolean }` (refer to runtime payload if it differs from `reason?` in type definitions).
+- **Payload**: `{ reason?: string }`
 - **Description**: Can be cross-referenced with `connectionSnapshot` for validation.
 
 ### `sdk:error`
@@ -511,15 +513,19 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
    - Recommended to pick colors from actual video screenshots.
    - Avoid using generic pure green (#00FF00).
    - Only green hues are supported.
+   - Default: `[0, 255, 0]` (pure green).
 
 2. **Similarity (`similarity`)**
+   - Default: `0.4`
    - Start from `0.3` and adjust incrementally.
    - Values too high may erroneously remove person details (e.g., hair or clothing).
 
 3. **Green Spill Suppression (`despillStrength`)**
+   - Default: `1.15`
    - Used to reduce green reflections/fringes on the subject's edges.
 
 4. **Edge Smoothness (`smoothness`)**
+   - Default: `0.25`
    - Improves blending for hair and semi-transparent areas.
 
 ---
