@@ -1,6 +1,6 @@
-# 实时音视频交互 SDK 使用手册（v1.0.0）
+# 实时音视频交互 SDK 使用手册（v1.0.4）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.4** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -24,11 +24,11 @@ SDK 通过 `ClientOptions.connectConfig` 区分两种互斥模式：**Direct（�
 ### 2.1 Direct Mode（直连模式）
 
 **描述**  
-由调用方在构造参数中直接提供 LiveKit 所需的 `sfuUrl` 与 `userToken`。SDK 不通过 HTTP 拉取房间配置。
+由调用方在构造参数中直接提供 LiveKit 所需的 `sfuUrl` 与 `clientToken`。SDK 不通过 HTTP 拉取房间配置。
 
 **前置条件**
 
-- 必须提供非空的 `sfuUrl`（LiveKit WebSocket URL）与 `userToken`（房间访问令牌）。
+- 必须提供非空的 `sfuUrl`（LiveKit WebSocket URL）与 `clientToken`（房间访问令牌）。
 - 若业务在运行中更换房间或令牌，必须在下次重连前通过 `updateConnectionConfig` 注入新配置（见行为说明）。
 
 **初始化方式**
@@ -54,7 +54,7 @@ const client = createClient({
 
 - `preConnect()` / `connect()`：从当前 Direct 配置（或 `updateConnectionConfig` / `reconnect` 阶段暂存的替换配置）解析出 `livekitUrl` 与 `token`，写入上下文后建立 LiveKit 连接。
 - `reconnect()`：在断开当前连接后调用 `refreshConfig()`；Direct 模式下会再次读取 ConfigManager 中的 Direct 配置（含已通过 `replaceDirectConfig` 应用的 `updateConnectionConfig` 结果），不会调用鉴权 HTTP 拉取房间。
-- 不会自动「刷新」服务端签发的 token；令牌过期须由业务侧获取新令牌并调用 `updateConnectionConfig` 后再 `reconnect()`。
+- 不会自动「刷新」服务端签发的 token；令牌过期须由业务侧获取新令牌并调用 `updateConnectionConfig` 后再 `preConnect()` / `connect()` 或 `reconnect()`。
 
 **使用限制**
 
@@ -125,11 +125,11 @@ client.setAuthToken('jwt-or-business-token');
 
 | 项目                     | Direct Mode                                                                      | Auth Mode                                              |
 | ------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 配置来源                 | 构造参数中的 `sfuUrl`、`userToken`                                             | HTTP 接口返回的 `ConnectionConfig`                     |
+| 配置来源                 | 构造参数中的 `sfuUrl`、`clientToken`                                             | HTTP 接口返回的 `ConnectionConfig`                     |
 | 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                  | 是（获取鉴权与房间配置）                               |
-| 必填字段                 | `sfuUrl` + `userToken`                                                          | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
+| 必填字段                 | `sfuUrl` + `clientToken`                                                         | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
 | `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                      | 必须或建议在连接前注入                                 |
-| `updateConnectionConfig` | 可用；作用于**下一次** `reconnect()` 所使用的 Direct 配置                        | 不可用（抛出错误）                                     |
+| `updateConnectionConfig` | 可用；作用于**下一次** `preConnect()` / `connect()` 或 `reconnect()` 所使用的 Direct 配置 | 不可用（抛出错误）                                     |
 | `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新） | `refreshConfig()` 重新 HTTP 拉取                       |
 
 ---
@@ -285,6 +285,15 @@ await client.connect();
 | `enabled`  | 默认 `true`；`false` 关闭内置性能采集                  |
 | `reporter` | `(metric: PerformanceMetricRecord) => void` 自定义上报 |
 
+### 5.6 `MicrophoneStats`
+
+| 字段           | 说明                 |
+| -------------- | -------------------- |
+| `bytesSent`    | 已发送字节数         |
+| `packetsSent` | 已发送数据包数       |
+| `packetsLost` | 丢失的数据包数       |
+| `roundTripTime` | 往返时间（毫秒）   |
+
 ---
 
 ## 6. 核心 API 方法
@@ -308,7 +317,7 @@ await client.connect();
 | 方法                                                           | 说明                                                                                                                                            |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                       |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `clientToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
 ### 6.3 媒体
 
@@ -322,6 +331,9 @@ await client.connect();
 | `mute()` / `unmute()`                                  | 播放静音控制。                     |
 | `get isMuted`                                          | 是否静音。                         |
 | `get isAudioCapturing`                                 | 麦克风是否处于活跃发布状态。       |
+| `getMicrophoneAudioLevel(): number \| null`            | 获取麦克风音频级别 (0.0-1.0)。     |
+| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。         |
+| `isMicrophoneSilent(): Promise<boolean \| null>`       | 检测麦克风是否在发送静音。         |
 | `startCamera(): Promise<void>`                         | 开启摄像头并发布。                 |
 | `stopCamera(): void`                                   | 停止摄像头。                       |
 | `getCameraStream(): MediaStream \| null`               | 本地预览用流。                     |
@@ -343,6 +355,13 @@ await client.connect();
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
+
+### 6.6 版本信息
+
+| 成员                          | 说明                   |
+| ----------------------------- | ---------------------- |
+| `SDKClient.version: string`  | SDK 版本号字符串。      |
+| `VERSION: string`            | 直接导出的版本号常量。 |
 
 ---
 
@@ -368,6 +387,16 @@ await client.connect();
 
 - **触发时机**：内部错误经映射为对外安全负载时。
 - **Payload**：`{ message: string; code: string }`（`code` 为 `ErrorCode` 字符串值）。
+
+### `sdk:connectionStateChanged`
+
+- **触发时机**：LiveKit 连接状态变更时（断开/连接中/已连接/重连中）。
+- **Payload**：`{ state: ConnectionState }`，其中 `ConnectionState` 为枚举值：`disconnected` | `connecting` | `connected` | `reconnecting` | `signalReconnecting`。
+
+### `sdk:connectionQualityChanged`
+
+- **触发时机**：参与者连接质量变化时（由 LiveKit RTC 层驱动）。
+- **Payload**：`{ quality: ConnectionQuality; participantId: string; isLocal: boolean }`，其中 `ConnectionQuality` 为枚举值：`excellent` | `good` | `poor` | `lost` | `unknown`。
 
 **视频**
 
@@ -424,7 +453,9 @@ await client.connect();
 ## 8. 完整使用示例
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
+import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
+
+console.log('SDK version:', VERSION);
 
 async function main() {
   const container = document.getElementById('avatar');
@@ -498,7 +529,7 @@ main();
 **Direct 模式下更换房间/token**：
 
 ```ts
-client.updateConnectionConfig({ sfuUrl: 'wss://new-host', userToken: 'new-token' });
+client.updateConnectionConfig({ sfuUrl: 'wss://new-host', clientToken: 'new-token' });
 await client.reconnect();
 ```
 
@@ -553,7 +584,7 @@ await client.reconnect();
 
 **Direct 模式 reconnect 仍使用旧 token**
 
-1. 是否在 `reconnect()` 前调用了 `updateConnectionConfig`；该方法**不会**影响当前连接，仅作用于后续重连路径。
+1. 是否在 `preConnect()` / `connect()` 或 `reconnect()` 前调用了 `updateConnectionConfig`；该方法**不会**影响当前连接，仅作用于后续连接路径。
 
 **绿幕卡顿**
 
@@ -677,5 +708,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.0.0。_
-
+_文档版本与包版本一致：1.0.4。_

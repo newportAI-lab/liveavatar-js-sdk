@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.0.0)
+# Facemarket Live Avatar SDK User Manual (v1.0.4)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.4**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -125,7 +125,7 @@ client.setAuthToken('jwt-or-business-token');
 | **Business HTTP Required** | No (Optional `http` config if using other HTTP capabilities). | **Yes** (required for auth and room config). |
 | **Required Fields** | `sfuUrl` + `userToken` | `avatarId` + valid `authToken` (constructor or `setAuthToken`). |
 | **`setAuthToken`** | Not used for resolving LiveKit connection config. | Mandatory or recommended to inject before connecting. |
-| **`updateConnectionConfig`**| Available; applies to the Direct config used in the **next** `reconnect()`. | Unavailable (throws error). |
+| **`updateConnectionConfig`**| Available; applies to the Direct config used in the **next** `preConnect()` / `connect()` or `reconnect()`. | Unavailable (throws error). |
 | **`reconnect()` Refresh** | Uses `refreshConfig()` to read Direct path config (includes updates via `replaceDirectConfig`). | Uses `refreshConfig()` to re-fetch via HTTP. |
 
 ---
@@ -272,7 +272,7 @@ await client.connect();
 | `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` Default values for the playback side. |
 
-**Note**: `channelCount` is optional and defaults to `1`. |
+**Note**: `channelCount` is optional and defaults to `1`.
 
 ### 5.5 `performanceMonitor`
 
@@ -280,6 +280,15 @@ await client.connect();
 | :--- | :--- |
 | `enabled` | Defaults to `true`; set to `false` to disable built-in performance collection. |
 | `reporter` | `(metric: PerformanceMetricRecord) => void` Custom reporting callback. |
+
+### 5.6 `MicrophoneStats`
+
+| Field | Description |
+| :--- | :--- |
+| `bytesSent` | Number of bytes sent. |
+| `packetsSent` | Number of packets sent. |
+| `packetsLost` | Number of lost packets. |
+| `roundTripTime` | Round-trip time in milliseconds. |
 
 ---
 
@@ -304,7 +313,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | Method | Description |
 | :--- | :--- |
 | `setAuthToken(token: string): void` | Sets the auth token; used by HTTP and Config components in **Auth Mode**. |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `reconnect()` via `replaceDirectConfig`. |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `preConnect()` / `connect()` or `reconnect()` via `replaceDirectConfig`. |
 
 ### 6.3 Media
 
@@ -318,6 +327,9 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `mute()` / `unmute()` | Controls playback muting. |
 | `get isMuted` | Returns whether playback is muted. |
 | `get isAudioCapturing` | Returns whether the microphone is actively publishing. |
+| `getMicrophoneAudioLevel(): number \| null` | Gets the microphone audio level (0.0-1.0). |
+| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | Gets microphone transmission statistics. |
+| `isMicrophoneSilent(): Promise<boolean \| null>` | Detects if the microphone is sending silence. |
 | `startCamera(): Promise<void>` | Opens the camera and publishes. |
 | `stopCamera(): void` | Stops the camera. |
 | `getCameraStream(): MediaStream \| null` | Returns the local stream for previewing. |
@@ -339,6 +351,13 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `get connectionSnapshot(): ConnectionSnapshot` | Synchronous read-only snapshot: `http.connected`, `rtc.connected`, `rtc.hasVideoTrack`, `overall.state`. |
 | `setPerformanceMetricReporter(cb?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
 | `get events(): PublicEmitterAPI` | Accesses the event emitter (supports `on`, `off`, `once` only). |
+
+### 6.6 Version Information
+
+| Member | Description |
+| :--- | :--- |
+| `SDKClient.version: string` | SDK version string. |
+| `VERSION: string` | Directly exported version constant. |
 
 ---
 
@@ -364,6 +383,16 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 
 - **Trigger**: Dispatched when an internal error is mapped to a secure external payload.
 - **Payload**: `{ message: string; code: string }` (`code` is the string value of `ErrorCode`).
+
+### `sdk:connectionStateChanged`
+
+- **Trigger**: When LiveKit connection state changes (disconnected/connecting/connected/reconnecting).
+- **Payload**: `{ state: ConnectionState }`, where `ConnectionState` enum: `disconnected` | `connecting` | `connected` | `reconnecting` | `signalReconnecting`.
+
+### `sdk:connectionQualityChanged`
+
+- **Trigger**: When participant connection quality changes (driven by LiveKit RTC layer).
+- **Payload**: `{ quality: ConnectionQuality; participantId: string; isLocal: boolean }`, where `ConnectionQuality` enum: `excellent` | `good` | `poor` | `lost` | `unknown`.
 
 **Video**
 
@@ -420,7 +449,9 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ## 8. Full Usage Example
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
+import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
+
+console.log('SDK version:', VERSION);
 
 async function main() {
   const container = document.getElementById('avatar');
@@ -597,7 +628,6 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `AUDIO_CAPTURE_START_FAILED` | Mic start failed. Check user gestures, HTTPS, and permissions. |
 | `AUDIO_CAPTURE_FAILED` | Capture interrupted. |
 | `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | Parameter mismatch with device or protocol. |
-| `AUDIO_INVALID_HEADER_LENGTH` / `AUDIO_INVALID_TYPE` / `AUDIO_INVALID_RESERVED` | Illegal uplink packet header. |
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
 
 ### 11.5 Camera
@@ -670,4 +700,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-*Document version consistent with package version: 1.0.0.*
+_Document version consistent with package version: 1.0.4._
