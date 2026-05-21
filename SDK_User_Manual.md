@@ -444,6 +444,12 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `conversation:answer:chunk` | Answer text chunk received. | `{ questionId: string; chunk: string }` (End of stream is determined by the `completed` event). |
 | `conversation:answer:completed` | Single turn answer completed. | `{ questionId: string; fullAnswer: string }` |
 
+**Session**
+
+| Event | Trigger | Payload |
+| :--- | :--- | :--- |
+| `session:closing` | Server-initiated session closure. | `Record<string, unknown>` |
+
 ---
 
 ## 8. Full Usage Example
