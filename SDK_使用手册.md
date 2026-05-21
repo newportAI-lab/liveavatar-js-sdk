@@ -123,14 +123,14 @@ client.setAuthToken('jwt-or-business-token');
 
 ### 2.3 模式对比
 
-| 项目                     | Direct Mode                                                                      | Auth Mode                                              |
-| ------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 配置来源                 | 构造参数中的 `sfuUrl`、`clientToken`                                             | HTTP 接口返回的 `ConnectionConfig`                     |
-| 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                  | 是（获取鉴权与房间配置）                               |
-| 必填字段                 | `sfuUrl` + `clientToken`                                                         | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
-| `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                      | 必须或建议在连接前注入                                 |
+| 项目                     | Direct Mode                                                                               | Auth Mode                                              |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 配置来源                 | 构造参数中的 `sfuUrl`、`clientToken`                                                      | HTTP 接口返回的 `ConnectionConfig`                     |
+| 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                           | 是（获取鉴权与房间配置）                               |
+| 必填字段                 | `sfuUrl` + `clientToken`                                                                  | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
+| `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                               | 必须或建议在连接前注入                                 |
 | `updateConnectionConfig` | 可用；作用于**下一次** `preConnect()` / `connect()` 或 `reconnect()` 所使用的 Direct 配置 | 不可用（抛出错误）                                     |
-| `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新） | `refreshConfig()` 重新 HTTP 拉取                       |
+| `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新）          | `refreshConfig()` 重新 HTTP 拉取                       |
 
 ---
 
@@ -244,11 +244,11 @@ await client.connect();
 
 **Direct**
 
-| 字段                 | 类型       | 必填 |
-| -------------------- | ---------- | ---- |
-| `type`               | `'direct'` | 是   |
-| `config.sfuUrl`      | `string`   | 是   |
-| `config.userToken`   | `string`   | 是   |
+| 字段               | 类型       | 必填 |
+| ------------------ | ---------- | ---- |
+| `type`             | `'direct'` | 是   |
+| `config.sfuUrl`    | `string`   | 是   |
+| `config.userToken` | `string`   | 是   |
 
 **Auth**
 
@@ -271,10 +271,10 @@ await client.connect();
 
 ### 5.4 `audio`（`AudioOptions`）
 
-| 字段     | 说明                                                                                                               |
-| -------- | ------------------------------------------------------------------------------------------------------------------ |
+| 字段     | 说明                                                                                                                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
-| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                              |
+| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                 |
 
 **注意**：`channelCount` 为可选，默认为 `1`。
 
@@ -287,12 +287,12 @@ await client.connect();
 
 ### 5.6 `MicrophoneStats`
 
-| 字段           | 说明                 |
-| -------------- | -------------------- |
-| `bytesSent`    | 已发送字节数         |
-| `packetsSent` | 已发送数据包数       |
-| `packetsLost` | 丢失的数据包数       |
-| `roundTripTime` | 往返时间（毫秒）   |
+| 字段            | 说明             |
+| --------------- | ---------------- |
+| `bytesSent`     | 已发送字节数     |
+| `packetsSent`   | 已发送数据包数   |
+| `packetsLost`   | 丢失的数据包数   |
+| `roundTripTime` | 往返时间（毫秒） |
 
 ---
 
@@ -314,31 +314,31 @@ await client.connect();
 
 ### 6.2 鉴权与连接配置
 
-| 方法                                                           | 说明                                                                                                                                            |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                       |
+| 方法                                                           | 说明                                                                                                                                                                            |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                       |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `clientToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
 ### 6.3 媒体
 
-| 方法                                                   | 说明                               |
-| ------------------------------------------------------ | ---------------------------------- |
-| `setRenderFitMode(mode: RenderFitMode): void`          | 设置画面适配模式。                 |
-| `startAudioCapture(): Promise<void>`                   | 打开麦克风并通过 LiveKit 发布。    |
-| `stopAudioCapture(): Promise<void>`                    | 停止麦克风发布。                   |
-| `setVolume(volume: number): void`                      | 播放音量 `0..1`。                  |
-| `getVolume(): number`                                  | 读取播放音量。                     |
-| `mute()` / `unmute()`                                  | 播放静音控制。                     |
-| `get isMuted`                                          | 是否静音。                         |
-| `get isAudioCapturing`                                 | 麦克风是否处于活跃发布状态。       |
-| `getMicrophoneAudioLevel(): number \| null`            | 获取麦克风音频级别 (0.0-1.0)。     |
-| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。         |
-| `isMicrophoneSilent(): Promise<boolean \| null>`       | 检测麦克风是否在发送静音。         |
-| `startCamera(): Promise<void>`                         | 开启摄像头并发布。                 |
-| `stopCamera(): void`                                   | 停止摄像头。                       |
-| `getCameraStream(): MediaStream \| null`               | 本地预览用流。                     |
-| `getCameraTrack(): MediaStreamTrack \| null`           | 本地轨道。                         |
-| `attachCameraTo(videoElement: HTMLVideoElement): void` | 将本地摄像头画⾯绑定到 `<video>`。 |
+| 方法                                                     | 说明                               |
+| -------------------------------------------------------- | ---------------------------------- |
+| `setRenderFitMode(mode: RenderFitMode): void`            | 设置画面适配模式。                 |
+| `startAudioCapture(): Promise<void>`                     | 打开麦克风并通过 LiveKit 发布。    |
+| `stopAudioCapture(): Promise<void>`                      | 停止麦克风发布。                   |
+| `setVolume(volume: number): void`                        | 播放音量 `0..1`。                  |
+| `getVolume(): number`                                    | 读取播放音量。                     |
+| `mute()` / `unmute()`                                    | 播放静音控制。                     |
+| `get isMuted`                                            | 是否静音。                         |
+| `get isAudioCapturing`                                   | 麦克风是否处于活跃发布状态。       |
+| `getMicrophoneAudioLevel(): number \| null`              | 获取麦克风音频级别 (0.0-1.0)。     |
+| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。           |
+| `isMicrophoneSilent(): Promise<boolean \| null>`         | 检测麦克风是否在发送静音。         |
+| `startCamera(): Promise<void>`                           | 开启摄像头并发布。                 |
+| `stopCamera(): void`                                     | 停止摄像头。                       |
+| `getCameraStream(): MediaStream \| null`                 | 本地预览用流。                     |
+| `getCameraTrack(): MediaStreamTrack \| null`             | 本地轨道。                         |
+| `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画⾯绑定到 `<video>`。 |
 
 ### 6.4 会话
 
@@ -358,10 +358,10 @@ await client.connect();
 
 ### 6.6 版本信息
 
-| 成员                          | 说明                   |
-| ----------------------------- | ---------------------- |
-| `SDKClient.version: string`  | SDK 版本号字符串。      |
-| `VERSION: string`            | 直接导出的版本号常量。 |
+| 成员                        | 说明                   |
+| --------------------------- | ---------------------- |
+| `SDKClient.version: string` | SDK 版本号字符串。     |
+| `VERSION: string`           | 直接导出的版本号常量。 |
 
 ---
 
@@ -395,7 +395,7 @@ await client.connect();
 
 ### `sdk:connectionQualityChanged`
 
-- **触发时机**：参与者连接质量变化时（由 LiveKit RTC 层驱动）。
+- **触发时机**：参与者连接质量变化时。
 - **Payload**：`{ quality: ConnectionQuality; participantId: string; isLocal: boolean }`，其中 `ConnectionQuality` 为枚举值：`excellent` | `good` | `poor` | `lost` | `unknown`。
 
 **视频**
@@ -447,6 +447,12 @@ await client.connect();
 | `conversation:asr:chunk`        | ASR 文本分片 | `{ questionId: string; text: string; isComplete: boolean }`                                                      |
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId: string; chunk: string }`（公开转发层仅保证 `questionId` 与 `chunk`；流式结束以 `completed` 为准） |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId: string; fullAnswer: string }`                                                                     |
+
+**会话**
+
+| 事件                | 触发时机         | Payload                      |
+| ------------------- | ---------------- | ---------------------------- |
+| `session:closing`  | 服务端发起关闭   | `Record<string, unknown>`    |
 
 ---
 
@@ -631,12 +637,12 @@ await client.reconnect();
 
 ### 11.4 音频
 
-| 代码                                                          | 说明与处理建议                    |
-| ------------------------------------------------------------- | --------------------------------- |
-| `AUDIO_CAPTURE_START_FAILED`                                  | 麦克风启动失败；用户手势、HTTPS、权限。 |
-| `AUDIO_CAPTURE_FAILED`                                        | 采集中断。                        |
-| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。           |
-| `AUDIO_CONTROLLER_NOT_AVAILABLE`                              | 控制器未创建或已释放。            |
+| 代码                                                                          | 说明与处理建议                          |
+| ----------------------------------------------------------------------------- | --------------------------------------- |
+| `AUDIO_CAPTURE_START_FAILED`                                                  | 麦克风启动失败；用户手势、HTTPS、权限。 |
+| `AUDIO_CAPTURE_FAILED`                                                        | 采集中断。                              |
+| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。                 |
+| `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                  |
 
 ### 11.5 摄像头
 
