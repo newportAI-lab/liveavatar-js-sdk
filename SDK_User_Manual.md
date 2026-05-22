@@ -269,7 +269,7 @@ await client.connect();
 
 | Field | Description |
 | :--- | :--- |
-| `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
+| `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` Default values for the playback side. |
 
 **Note**: `channelCount` is optional and defaults to `1`.

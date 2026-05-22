@@ -273,7 +273,7 @@ await client.connect();
 
 | 字段     | 说明                                                                                                                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, constraints?: MediaTrackConstraints }` |
+| `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                 |
 
 **注意**：`channelCount` 为可选，默认为 `1`。
