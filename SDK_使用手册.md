@@ -1,6 +1,6 @@
-# 实时音视频交互 SDK 使用手册（v1.0.4）
+# 实时音视频交互 SDK 使用手册（v1.0.5）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.4** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.5** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 

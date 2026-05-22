@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.0.4)
+# Facemarket Live Avatar SDK User Manual (v1.0.5)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.4**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.5**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
