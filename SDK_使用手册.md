@@ -1,6 +1,6 @@
-# 实时音视频交互 SDK 使用手册（v1.0.5）
+# 实时音视频交互 SDK 使用手册（v1.0.6）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.5** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.6** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -353,6 +353,7 @@ await client.connect();
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `get isConnected(): boolean`                                               | 会话是否处于已连接态。                                                                  |
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
+| `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。    |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
 
@@ -714,4 +715,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.0.4。_
+_文档版本与包版本一致：1.0.6。_
