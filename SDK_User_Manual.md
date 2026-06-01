@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.0.6)
+# Facemarket Live Avatar SDK User Manual (v1.0.7)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.6**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.7**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -272,7 +272,7 @@ await client.connect();
 | `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` Default values for the playback side. |
 
-**Note**: `channelCount` is optional and defaults to `1`.
+**Note**: `channelCount` is optional and defaults to `1`. `noiseSuppression`, `echoCancellation`, and `autoGainControl` default to `true` when not explicitly set.
 
 ### 5.5 `performanceMonitor`
 
@@ -707,4 +707,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.0.6._
+_Document version consistent with package version: 1.0.7._

@@ -1,6 +1,6 @@
-# 实时音视频交互 SDK 使用手册（v1.0.6）
+# 实时音视频交互 SDK 使用手册（v1.0.7）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.6** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.7** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -276,7 +276,7 @@ await client.connect();
 | `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                 |
 
-**注意**：`channelCount` 为可选，默认为 `1`。
+**注意**：`channelCount` 为可选，默认为 `1`。`noiseSuppression`、`echoCancellation`、`autoGainControl` 未设置时默认值为 `true`。
 
 ### 5.5 `performanceMonitor`
 
@@ -715,4 +715,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.0.6。_
+_文档版本与包版本一致：1.0.7。_
