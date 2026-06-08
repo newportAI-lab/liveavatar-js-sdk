@@ -1,4 +1,4 @@
-# 实时音视频交互 SDK 使用手册（v1.0.7）
+# Facemarket 实时数字人 SDK 使用手册（v1.0.7）
 
 本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.7** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
@@ -24,11 +24,11 @@ SDK 通过 `ClientOptions.connectConfig` 区分两种互斥模式：**Direct（�
 ### 2.1 Direct Mode（直连模式）
 
 **描述**  
-由调用方在构造参数中直接提供 LiveKit 所需的 `sfuUrl` 与 `clientToken`。SDK 不通过 HTTP 拉取房间配置。
+由调用方在构造参数中直接提供 LiveKit 所需的 `sfuUrl` 与 `userToken`。SDK 不通过 HTTP 拉取房间配置。
 
 **前置条件**
 
-- 必须提供非空的 `sfuUrl`（LiveKit WebSocket URL）与 `clientToken`（房间访问令牌）。
+- 必须提供非空的 `sfuUrl`（LiveKit WebSocket URL）与 `userToken`（房间访问令牌）。
 - 若业务在运行中更换房间或令牌，必须在下次重连前通过 `updateConnectionConfig` 注入新配置（见行为说明）。
 
 **初始化方式**
@@ -125,9 +125,9 @@ client.setAuthToken('jwt-or-business-token');
 
 | 项目                     | Direct Mode                                                                               | Auth Mode                                              |
 | ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 配置来源                 | 构造参数中的 `sfuUrl`、`clientToken`                                                      | HTTP 接口返回的 `ConnectionConfig`                     |
+| 配置来源                 | 构造参数中的 `sfuUrl`、`userToken`                                                      | HTTP 接口返回的 `ConnectionConfig`                     |
 | 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                           | 是（获取鉴权与房间配置）                               |
-| 必填字段                 | `sfuUrl` + `clientToken`                                                                  | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
+| 必填字段                 | `sfuUrl` + `userToken`                                                                  | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
 | `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                               | 必须或建议在连接前注入                                 |
 | `updateConnectionConfig` | 可用；作用于**下一次** `preConnect()` / `connect()` 或 `reconnect()` 所使用的 Direct 配置 | 不可用（抛出错误）                                     |
 | `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新）          | `refreshConfig()` 重新 HTTP 拉取                       |
@@ -317,7 +317,7 @@ await client.connect();
 | 方法                                                           | 说明                                                                                                                                                                            |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                       |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `clientToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
 ### 6.3 媒体
 
@@ -338,7 +338,7 @@ await client.connect();
 | `stopCamera(): void`                                     | 停止摄像头。                       |
 | `getCameraStream(): MediaStream \| null`                 | 本地预览用流。                     |
 | `getCameraTrack(): MediaStreamTrack \| null`             | 本地轨道。                         |
-| `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画⾯绑定到 `<video>`。 |
+| `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画面绑定到 `<video>`。 |
 
 ### 6.4 会话
 
@@ -449,7 +449,7 @@ await client.connect();
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId: string; chunk: string }`（公开转发层仅保证 `questionId` 与 `chunk`；流式结束以 `completed` 为准） |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId: string; fullAnswer: string }`                                                                     |
 
-**会话**
+**会话控制**
 
 | 事件                | 触发时机         | Payload                      |
 | ------------------- | ---------------- | ---------------------------- |
@@ -536,7 +536,7 @@ main();
 **Direct 模式下更换房间/token**：
 
 ```ts
-client.updateConnectionConfig({ sfuUrl: 'wss://new-host', clientToken: 'new-token' });
+client.updateConnectionConfig({ sfuUrl: 'wss://new-host', userToken: 'new-token' });
 await client.reconnect();
 ```
 
@@ -544,7 +544,7 @@ await client.reconnect();
 
 ## 9. 视频绿幕参数调试指南
 
-在启用绿幕前，请确保，或不做配置，sdk内部将做自动判断
+在启用绿幕前，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
@@ -553,26 +553,26 @@ await client.reconnect();
 
 1. **背景取色（`chromaKey`）**
 
-- 建议从真实视频截图中取色
-- 避免直接使用纯绿色
-- 仅支持绿色调
-- 默认值：`[0, 255, 0]`（纯绿色）
+   - 建议从真实视频截图中取色
+   - 避免直接使用纯绿色
+   - 仅支持绿色调
+   - 默认值：`[0, 255, 0]`（纯绿色）
 
 2. **相似度（`similarity`）**
 
-- 默认值：`0.4`
-- 推荐从 `0.3` 开始逐步调整
-- 数值过大可能误抠除人物细节
+   - 默认值：`0.4`
+   - 推荐从 `0.3` 开始逐步调整
+   - 数值过大可能误抠除人物细节
 
 3. **绿色溢出抑制（`despillStrength`）**
 
-- 默认值：`1.15`
-- 用于减少人物边缘绿色反光
+   - 默认值：`1.15`
+   - 用于减少人物边缘绿色反光
 
 4. **边缘平滑（`smoothness`）**
 
-- 默认值：`0.25`
-- 可改善头发、半透明区域的融合效果
+   - 默认值：`0.25`
+   - 可改善头发、半透明区域的融合效果
 
 ---
 

@@ -232,7 +232,7 @@ await client.connect();
 | `video` | `VideoOptions` | No | Rendering container, chroma key, `renderMode`, `fitMode`, etc. |
 | `reconnect` | `{ maxAttempts?, delay? }` | No | LiveKit reconnection: `maxAttempts` defaults to `3`; `delay` defaults to `10` (**seconds**), converted internally to ms. |
 | `http` | `{ baseURL?, headers? }` | No | Root path and default headers for Auth and HTTP control interfaces. |
-| `performanceMonitor`| `PerformanceMonitorOptions`| No | Enabled by default; set `enabled: false` to disable. |
+| `performanceMonitor` | `PerformanceMonitorOptions` | No | Enabled by default; set `enabled: false` to disable. |
 | `sandbox` | `boolean` | No | Sandbox toggle (based on backend business logic agreement). |
 | `debug` | `boolean` | No | Enables debug logging. |
 
@@ -334,7 +334,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `stopCamera(): void` | Stops the camera. |
 | `getCameraStream(): MediaStream \| null` | Returns the local stream for previewing. |
 | `getCameraTrack(): MediaStreamTrack \| null` | Returns the local media track. |
-| `attachCameraTo(el: HTMLVideoElement): void` | Binds the local camera stream to a `<video>` element. |
+| `attachCameraTo(videoElement: HTMLVideoElement): void` | Binds the local camera stream to a `<video>` element. |
 
 ### 6.4 Session
 
@@ -350,7 +350,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `get isConnected(): boolean` | Whether the session is currently connected. |
 | `get connectionSnapshot(): ConnectionSnapshot` | Synchronous read-only snapshot: `http.connected`, `rtc.connected`, `rtc.hasVideoTrack`, `overall.state`. |
 | `get sessionId(): string \| undefined` | Server-assigned session ID. **Auth mode only**; returns `undefined` in direct mode and logs a debug message. |
-| `setPerformanceMetricReporter(cb?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
+| `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
 | `get events(): PublicEmitterAPI` | Accesses the event emitter (supports `on`, `off`, `once` only). |
 
 ### 6.6 Version Information
@@ -602,7 +602,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `SDK_AUTH_TOKEN_FAILED` | Auth HTTP request failed. Check token and gateway URL. |
 | `SDK_GET_LIVEKIT_CONFIG_FAILED` | Failed to fetch room config. Ensure backend returns `livekitUrl` / `roomToken`. |
 | `SDK_SWITCH_VIDEO_FAILED` | Control logic for switching video failed. Check logs for details. |
-| `SDK_INTERRUPT_CONVERSATION_FAILED`| Failed to send interruption command. |
+| `SDK_INTERRUPT_CONVERSATION_FAILED` | Failed to send interruption command. |
 | `HTTP_CONTROLLER_NOT_AVAILABLE` | HTTP controller is not ready. Avoid calling HTTP-dependent operations. |
 
 ### 11.2 SDK Lifecycle
