@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.0.7)
+# Facemarket Live Avatar SDK User Manual (v1.0.9)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.7**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.9**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -371,7 +371,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ### `sdk:connected`
 
 - **Trigger**: Dispatched when the aggregated state of internal `livekit` and `http` connections changes and differs from the previous state.
-- **Payload**: `{ livekit: boolean; http: boolean; all: boolean }`, where `all === livekit && http`.
+- **Payload**: `{ livekit: boolean; http: boolean; all: boolean }`. `auth` mode: `all === livekit && http` (both channels must be ready). `direct` mode: `all === livekit` (the HTTP control channel is not used; `http` is always `false`).
 - **Description**: Used for a high-level overview of whether both channels are ready.
 
 ### `sdk:disconnected`
@@ -707,4 +707,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.0.7._
+_Document version consistent with package version: 1.0.9._

@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.0.7）
+# Facemarket 实时数字人 SDK 使用手册（v1.0.9）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.7** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.9** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -375,7 +375,7 @@ await client.connect();
 ### `sdk:connected`
 
 - **触发时机**：内部 `livekit` 与 `http` 连接事实变化后，聚合状态与上次不同时下发。
-- **Payload**：`{ livekit: boolean; http: boolean; all: boolean }`，其中 `all === livekit && http`。
+- **Payload**：`{ livekit: boolean; http: boolean; all: boolean }`。`auth` 模式：`all === livekit && http`（两路通道均就绪）。`direct` 模式：`all === livekit`（无 http 控制通道，`http` 恒为 `false`）。
 - **说明**：用于总览两路通道是否同时就绪。
 
 ### `sdk:disconnected`
@@ -715,4 +715,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.0.7。_
+_文档版本与包版本一致：1.0.9。_
