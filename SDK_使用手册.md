@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.0.9）
+# Facemarket 实时数字人 SDK 使用手册（v1.1.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.0.9** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.1.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -375,14 +375,20 @@ await client.connect();
 ### `sdk:connected`
 
 - **触发时机**：内部 `livekit` 与 `http` 连接事实变化后，聚合状态与上次不同时下发。
-- **Payload**：`{ livekit: boolean; http: boolean; all: boolean }`。`auth` 模式：`all === livekit && http`（两路通道均就绪）。`direct` 模式：`all === livekit`（无 http 控制通道，`http` 恒为 `false`）。
-- **说明**：用于总览两路通道是否同时就绪。
+- **Payload**：`{ livekit: boolean; http: boolean; all: boolean; livekitConnected: boolean; httpConnected: boolean; allConnected: boolean }`。
+  - `livekitConnected` / `httpConnected` / `allConnected` 始终反映**当前**真实连接状态，与 `sdk:disconnected` 完全对称。`auth` 模式：`allConnected === livekitConnected && httpConnected`；`direct` 模式：`allConnected === livekitConnected`。
+  - 旧字段 `livekit` / `http` / `all` **已废弃**（保留兼容），下个主版本中将删除。
+- **说明**：用于总览两路通道是否同时就绪。推荐新代码使用新字段。
 
 ### `sdk:disconnected`
 
 - **触发时机**：任一路径断开事实导致聚合状态变化时。
-- **Payload**：`{ reason?: string }`
-- **说明**：可与 `connectionSnapshot` 交叉校验。
+- **Payload**：`{ livekit, http, all, livekitConnected, httpConnected, allConnected, reason? }`。
+  - **新字段** `livekitConnected` / `httpConnected` / `allConnected` 始终反映**当前**真实连接状态，与 `sdk:connected` 完全对称，全断开时三者均为 `false`。推荐新代码使用。
+  - **旧字段** `livekit` / `http` / `all` **已废弃**，保留以兼容历史消费方；其在 `sdk:disconnected` 路径上语义反转（断连后报 `true`），将在下个主版本中删除。
+  - `allConnected`（与旧 `all`）的模式语义：`auth` 模式为 `livekitConnected && httpConnected`；`direct` 模式为 `livekitConnected`。
+  - `reason`：透传自内层 `inner:sdk:disconnected.reason`。
+- **说明**：可与 `connectionSnapshot` 交叉校验。判定"已断开 → 可重连"应使用 `payload.allConnected === false`。
 
 ### `sdk:error`
 
@@ -436,6 +442,7 @@ await client.connect();
 | `media:audio:volumeChanged` | 音量变化 | `{ volume: number }` |
 | `media:audio:muted`         | 输出静音 | `undefined`          |
 | `media:audio:unmuted`       | 解除静音 | `undefined`          |
+| `media:audio:speakingChanged` | 远端参与者说话状态变化 | `{ participantId: string; isSpeaking: boolean }` |
 
 **会话**
 
@@ -644,6 +651,7 @@ await client.reconnect();
 | `AUDIO_CAPTURE_FAILED`                                                        | 采集中断。                              |
 | `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。                 |
 | `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                  |
+| `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
 
 ### 11.5 摄像头
 
@@ -715,4 +723,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.0.9。_
+_文档版本与包版本一致：1.1.0。_

@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.0.9)
+# Facemarket Live Avatar SDK User Manual (v1.1.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.0.9**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.1.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -371,14 +371,20 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ### `sdk:connected`
 
 - **Trigger**: Dispatched when the aggregated state of internal `livekit` and `http` connections changes and differs from the previous state.
-- **Payload**: `{ livekit: boolean; http: boolean; all: boolean }`. `auth` mode: `all === livekit && http` (both channels must be ready). `direct` mode: `all === livekit` (the HTTP control channel is not used; `http` is always `false`).
-- **Description**: Used for a high-level overview of whether both channels are ready.
+- **Payload**: `{ livekit: boolean; http: boolean; all: boolean; livekitConnected: boolean; httpConnected: boolean; allConnected: boolean }`.
+  - `livekitConnected` / `httpConnected` / `allConnected` always reflect the **current** connection state and are symmetric with `sdk:disconnected`. `auth` mode: `allConnected === livekitConnected && httpConnected`; `direct` mode: `allConnected === livekitConnected`.
+  - Legacy fields `livekit` / `http` / `all` are **deprecated** (kept for backward compatibility); will be removed in the next major version.
+- **Description**: Used for a high-level overview of whether both channels are ready. Recommended for new code to use the new fields.
 
 ### `sdk:disconnected`
 
 - **Trigger**: Dispatched when a disconnection in either path causes a change in the aggregated state.
-- **Payload**: `{ reason?: string }`
-- **Description**: Can be cross-referenced with `connectionSnapshot` for validation.
+- **Payload**: `{ livekit, http, all, livekitConnected, httpConnected, allConnected, reason? }`.
+  - **New fields** `livekitConnected` / `httpConnected` / `allConnected` always reflect the **current** connection state and are symmetric with `sdk:connected`; all three are `false` after a full disconnect. Recommended for new code.
+  - **Legacy fields** `livekit` / `http` / `all` are **deprecated** (kept for backward compatibility); on `sdk:disconnected` they carry the inverted semantic (`true` after disconnect). Will be removed in the next major version.
+  - `allConnected` (and legacy `all`) are mode-aware: `auth` mode is `livekitConnected && httpConnected`; `direct` mode is `livekitConnected`.
+  - `reason` is forwarded from the inner `inner:sdk:disconnected.reason`.
+- **Description**: Can be cross-referenced with `connectionSnapshot` for validation. To check "fully disconnected → ready to reconnect", use `payload.allConnected === false`.
 
 ### `sdk:error`
 
@@ -432,6 +438,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `media:audio:volumeChanged` | Volume level changed. | `{ volume: number }` |
 | `media:audio:muted` | Output muted. | `undefined` |
 | `media:audio:unmuted` | Output unmuted. | `undefined` |
+| `media:audio:speakingChanged` | Remote participant speaking state changed. | `{ participantId: string; isSpeaking: boolean }` |
 
 **Conversation**
 
@@ -636,6 +643,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `AUDIO_CAPTURE_FAILED` | Capture interrupted. |
 | `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | Parameter mismatch with device or protocol. |
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
+| `AUDIO_OUTPUT_DISABLED` | Thrown by `getAudioElement()` when `output.enabled === false`. |
 
 ### 11.5 Camera
 
@@ -707,4 +715,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.0.9._
+_Document version consistent with package version: 1.1.0._
