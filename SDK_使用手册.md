@@ -125,9 +125,9 @@ client.setAuthToken('jwt-or-business-token');
 
 | 项目                     | Direct Mode                                                                               | Auth Mode                                              |
 | ------------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 配置来源                 | 构造参数中的 `sfuUrl`、`userToken`                                                      | HTTP 接口返回的 `ConnectionConfig`                     |
+| 配置来源                 | 构造参数中的 `sfuUrl`、`userToken`                                                        | HTTP 接口返回的 `ConnectionConfig`                     |
 | 是否需要业务 HTTP        | 否（仅当同时使用其他 HTTP 能力时可选配 `http`）                                           | 是（获取鉴权与房间配置）                               |
-| 必填字段                 | `sfuUrl` + `userToken`                                                                  | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
+| 必填字段                 | `sfuUrl` + `userToken`                                                                    | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
 | `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                               | 必须或建议在连接前注入                                 |
 | `updateConnectionConfig` | 可用；作用于**下一次** `preConnect()` / `connect()` 或 `reconnect()` 所使用的 Direct 配置 | 不可用（抛出错误）                                     |
 | `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新）          | `refreshConfig()` 重新 HTTP 拉取                       |
@@ -160,8 +160,8 @@ const client = createClient({
 // 必须由业务后端签发后注入，此处省略具体请求实现
 client.setAuthToken('REPLACE_WITH_TOKEN_FROM_YOUR_BACKEND');
 
-client.events.on('sdk:connected', ({ livekit, http, all }) => {
-  console.log('channels', { livekit, http, all });
+client.events.on('sdk:connected', ({ livekitConnected, httpConnected, allConnected }) => {
+  console.log('channels', { livekitConnected, httpConnected, allConnected });
 });
 
 try {
@@ -271,10 +271,10 @@ await client.connect();
 
 ### 5.4 `audio`（`AudioOptions`）
 
-| 字段     | 说明                                                                                                                                                                                                   |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 字段     | 说明                                                                                                                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
-| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                 |
+| `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                                                                        |
 
 **注意**：`channelCount` 为可选，默认为 `1`。`noiseSuppression`、`echoCancellation`、`autoGainControl` 未设置时默认值为 `true`。
 
@@ -314,9 +314,9 @@ await client.connect();
 
 ### 6.2 鉴权与连接配置
 
-| 方法                                                           | 说明                                                                                                                                                                            |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                       |
+| 方法                                                           | 说明                                                                                                                                                                          |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                     |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
 ### 6.3 媒体
@@ -353,7 +353,7 @@ await client.connect();
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `get isConnected(): boolean`                                               | 会话是否处于已连接态。                                                                  |
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
-| `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。    |
+| `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。   |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
 
@@ -405,6 +405,11 @@ await client.connect();
 - **触发时机**：参与者连接质量变化时。
 - **Payload**：`{ quality: ConnectionQuality; participantId: string; isLocal: boolean }`，其中 `ConnectionQuality` 为枚举值：`excellent` | `good` | `poor` | `lost` | `unknown`。
 
+### `sdk:participant:disconnected`
+
+- **触发时机**：远端参与者离开 LiveKit 房间时。
+- **Payload**：`{ participantId: string }`。
+
 **视频**
 
 | 事件                       | 触发时机                                | Payload                            |
@@ -416,10 +421,11 @@ await client.connect();
 
 **远端音频**
 
-| 事件                       | 触发时机         | Payload     |
-| -------------------------- | ---------------- | ----------- |
-| `media:audio:trackAdded`   | 远端音频轨道添加 | `undefined` |
-| `media:audio:trackRemoved` | 远端音频轨道移除 | `undefined` |
+| 事件                          | 触发时机                 | Payload |
+| ----------------------------- | ------------------------ | ------- |
+| `media:audio:trackAdded`      | 远端参与者音频轨道订阅   | `undefined` |
+| `media:audio:trackRemoved`    | 远端参与者音频轨道取消订阅 | `undefined` |
+| `media:audio:speakingChanged` | 远端参与者说话状态变化   | `{ participantId: string; isSpeaking: boolean }` |
 
 **本地麦克风**
 
@@ -437,12 +443,11 @@ await client.connect();
 
 **播放音量**
 
-| 事件                        | 触发时机 | Payload              |
-| --------------------------- | -------- | -------------------- |
-| `media:audio:volumeChanged` | 音量变化 | `{ volume: number }` |
-| `media:audio:muted`         | 输出静音 | `undefined`          |
-| `media:audio:unmuted`       | 解除静音 | `undefined`          |
-| `media:audio:speakingChanged` | 远端参与者说话状态变化 | `{ participantId: string; isSpeaking: boolean }` |
+| 事件                          | 触发时机               | Payload                |
+| ----------------------------- | ---------------------- | ---------------------- |
+| `media:audio:volumeChanged`   | 音量变化               | `{ volume: number }`   |
+| `media:audio:muted`          | 输出静音               | `undefined`            |
+| `media:audio:unmuted`        | 解除静音               | `undefined`            |
 
 **会话**
 
@@ -458,9 +463,9 @@ await client.connect();
 
 **会话控制**
 
-| 事件                | 触发时机         | Payload                      |
-| ------------------- | ---------------- | ---------------------------- |
-| `session:closing`  | 服务端发起关闭   | `Record<string, unknown>`    |
+| 事件              | 触发时机       | Payload                   |
+| ----------------- | -------------- | ------------------------- |
+| `session:closing` | 服务端发起关闭 | `Record<string, unknown>` |
 
 ---
 
@@ -559,25 +564,21 @@ await client.reconnect();
 ### 9.1 参数调试建议
 
 1. **背景取色（`chromaKey`）**
-
    - 建议从真实视频截图中取色
    - 避免直接使用纯绿色
    - 仅支持绿色调
    - 默认值：`[0, 255, 0]`（纯绿色）
 
 2. **相似度（`similarity`）**
-
    - 默认值：`0.4`
    - 推荐从 `0.3` 开始逐步调整
    - 数值过大可能误抠除人物细节
 
 3. **绿色溢出抑制（`despillStrength`）**
-
    - 默认值：`1.15`
    - 用于减少人物边缘绿色反光
 
 4. **边缘平滑（`smoothness`）**
-
    - 默认值：`0.25`
    - 可改善头发、半透明区域的融合效果
 
@@ -603,6 +604,10 @@ await client.reconnect();
 **绿幕卡顿**
 
 1. 适当缩小展示区域分辨率或改用 `renderMode: 'raw'` 对比验证是否为 CPU/GPU 瓶颈。
+
+**无音频输出**
+
+1. 音频播放前用户未进行过主动交互操作
 
 ---
 
@@ -645,12 +650,12 @@ await client.reconnect();
 
 ### 11.4 音频
 
-| 代码                                                                          | 说明与处理建议                          |
-| ----------------------------------------------------------------------------- | --------------------------------------- |
-| `AUDIO_CAPTURE_START_FAILED`                                                  | 麦克风启动失败；用户手势、HTTPS、权限。 |
-| `AUDIO_CAPTURE_FAILED`                                                        | 采集中断。                              |
-| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。                 |
-| `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                  |
+| 代码                                                                          | 说明与处理建议                                                       |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `AUDIO_CAPTURE_START_FAILED`                                                  | 麦克风启动失败；用户手势、HTTPS、权限。                              |
+| `AUDIO_CAPTURE_FAILED`                                                        | 采集中断。                                                           |
+| `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。                                              |
+| `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                                               |
 | `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
 
 ### 11.5 摄像头

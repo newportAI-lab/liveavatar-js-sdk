@@ -1,0 +1,17 @@
+# Git Commit Message Format
+#
+# <type>: <description>
+#
+# Types:
+#   docs    - SDK documentation, manual, README changes
+#   chore   - repository maintenance (e.g., .gitignore, CI config)
+#
+# Description:
+#   - Use English
+#   - Start with lowercase
+#   - Single line, no body/footer
+#
+# Examples:
+#   docs: update SDK_User_Manual.md version to 1.1.0
+#   docs: add session:closing event documentation
+#   chore: update .gitignore

@@ -156,8 +156,8 @@ const client = createClient({
 // Must be issued by your business backend. The specific request implementation is omitted here.
 client.setAuthToken('REPLACE_WITH_TOKEN_FROM_YOUR_BACKEND');
 
-client.events.on('sdk:connected', ({ livekit, http, all }) => {
-  console.log('channels', { livekit, http, all });
+client.events.on('sdk:connected', ({ livekitConnected, httpConnected, allConnected }) => {
+  console.log('channels', { livekitConnected, httpConnected, allConnected });
 });
 
 try {
@@ -401,6 +401,11 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 - **Trigger**: When participant connection quality changes (driven by LiveKit RTC layer).
 - **Payload**: `{ quality: ConnectionQuality; participantId: string; isLocal: boolean }`, where `ConnectionQuality` enum: `excellent` | `good` | `poor` | `lost` | `unknown`.
 
+### `sdk:participant:disconnected`
+
+- **Trigger**: When a remote participant disconnects from the LiveKit room.
+- **Payload**: `{ participantId: string }`.
+
 **Video**
 
 | Event | Trigger | Payload |
@@ -414,8 +419,9 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 
 | Event | Trigger | Payload |
 | :--- | :--- | :--- |
-| `media:audio:trackAdded` | Remote audio track added. | `undefined` |
-| `media:audio:trackRemoved` | Remote audio track removed. | `undefined` |
+| `media:audio:trackAdded` | Remote participant's audio track is subscribed. | `undefined` |
+| `media:audio:trackRemoved` | Remote participant's audio track is unsubscribed. | `undefined` |
+| `media:audio:speakingChanged` | Remote participant's speaking state changed. | `{ participantId: string; isSpeaking: boolean }` |
 
 **Local Microphone**
 
@@ -438,7 +444,6 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `media:audio:volumeChanged` | Volume level changed. | `{ volume: number }` |
 | `media:audio:muted` | Output muted. | `undefined` |
 | `media:audio:unmuted` | Output unmuted. | `undefined` |
-| `media:audio:speakingChanged` | Remote participant speaking state changed. | `{ participantId: string; isSpeaking: boolean }` |
 
 **Conversation**
 
