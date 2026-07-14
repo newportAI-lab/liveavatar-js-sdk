@@ -1,4 +1,4 @@
-# Facemarket Live Avatar SDK User Manual (v1.1.0)
+# Facemarket Live Avatar SDK User Manual (v1.2.0)
 
 This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.1.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
@@ -262,6 +262,7 @@ await client.connect();
 | `containerElement` | The container where the video is mounted (**Ensure it exists and is inserted into the DOM**). |
 | `renderMode` | `'raw'` \| `'processed'` |
 | `greenScreen` | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength? }` |
+| `camera` | `{ publishToLiveKit?: boolean }` | No | Default `false`. When `true`, `startCamera()` publishes the track to the LiveKit room. Can be overridden per-call via `startCamera({ publishToLiveKit: true })`. |
 | `fitMode` | `'contain' \| 'cover' \| 'fill' \| 'none'` |
 | `debug` | Inherited from `BaseOptions`. |
 
@@ -330,11 +331,18 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `getMicrophoneAudioLevel(): number \| null` | Gets the microphone audio level (0.0-1.0). |
 | `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | Gets microphone transmission statistics. |
 | `isMicrophoneSilent(): Promise<boolean \| null>` | Detects if the microphone is sending silence. |
-| `startCamera(): Promise<void>` | Opens the camera and publishes. |
+| `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | Opens the camera; optionally publishes to LiveKit room. Defaults to local preview only. |
 | `stopCamera(): void` | Stops the camera. |
 | `getCameraStream(): MediaStream \| null` | Returns the local stream for previewing. |
 | `getCameraTrack(): MediaStreamTrack \| null` | Returns the local media track. |
 | `attachCameraTo(videoElement: HTMLVideoElement): void` | Binds the local camera stream to a `<video>` element. |
+| `detachCameraFrom(videoElement: HTMLVideoElement): void` | Detaches the camera track from a video element. |
+| `startAnalyserEmission(): void` | Starts emitting remote audio analyser data (~60fps) via `media:audio:analyserData`. |
+| `stopAnalyserEmission(): void` | Stops remote audio analyser emission and releases AudioContext. |
+| `restartAnalyserEmission(): void` | Restarts the remote audio analyser chain. |
+| `startLocalAnalyserEmission(): void` | Starts emitting local microphone analyser data via `media:audio:localAnalyserData`. Must be called **after `startAudioCapture()`** so the microphone stream is available. |
+| `stopLocalAnalyserEmission(): void` | Stops local microphone analyser emission. |
+| `restartLocalAnalyserEmission(): void` | Restarts the local microphone analyser chain. |
 
 ### 6.4 Session
 
@@ -422,6 +430,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `media:audio:trackAdded` | Remote participant's audio track is subscribed. | `undefined` |
 | `media:audio:trackRemoved` | Remote participant's audio track is unsubscribed. | `undefined` |
 | `media:audio:speakingChanged` | Remote participant's speaking state changed. | `{ participantId: string; isSpeaking: boolean }` |
+| `media:audio:analyserData` | Remote audio analyser data ready at ~60fps. | `{ frequencyData: Uint8Array; timeDomainData: Uint8Array }` |
 
 **Local Microphone**
 
@@ -429,6 +438,13 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | :--- | :--- | :--- |
 | `media:audio:captureStarted` | Local input capture started. | `undefined` |
 | `media:audio:captureStopped` | Local input capture stopped. | `undefined` |
+| `media:audio:frameData` | Raw audio frame data with sample rate. | `{ data: Float32Array; sampleRate: number }` |
+
+**Local Microphone Analyser**
+
+| Event | Trigger | Payload |
+| :--- | :--- | :--- |
+| `media:audio:localAnalyserData` | Local microphone analyser data at ~60fps. | `{ frequencyData: Uint8Array; timeDomainData: Uint8Array }` |
 
 **Local Camera**
 
@@ -720,4 +736,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.1.0._
+_Document version consistent with package version: 1.2.0._

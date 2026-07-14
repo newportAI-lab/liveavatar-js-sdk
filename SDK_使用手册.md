@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.1.0）
+# Facemarket 实时数字人 SDK 使用手册（v1.2.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.1.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.2.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -267,6 +267,7 @@ await client.connect();
 | `renderMode`       | `'raw'` \| `'processed'`                                              |
 | `greenScreen`      | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength? }` |
 | `fitMode`          | `'contain' \| 'cover' \| 'fill' \| 'none'`                            |
+| `camera`           | `{ publishToLiveKit?: boolean }`                                      | 默认 `false`；为 `true` 时 `startCamera()` 将轨道发布到 LiveKit 房间。 |
 | `debug`            | 继承 `BaseOptions`                                                    |
 
 ### 5.4 `audio`（`AudioOptions`）
@@ -334,11 +335,18 @@ await client.connect();
 | `getMicrophoneAudioLevel(): number \| null`              | 获取麦克风音频级别 (0.0-1.0)。     |
 | `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。           |
 | `isMicrophoneSilent(): Promise<boolean \| null>`         | 检测麦克风是否在发送静音。         |
-| `startCamera(): Promise<void>`                           | 开启摄像头并发布。                 |
+| `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | 开启摄像头；可选择发布到 LiveKit 房间（默认仅本地预览）。 |
 | `stopCamera(): void`                                     | 停止摄像头。                       |
 | `getCameraStream(): MediaStream \| null`                 | 本地预览用流。                     |
 | `getCameraTrack(): MediaStreamTrack \| null`             | 本地轨道。                         |
 | `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画面绑定到 `<video>`。 |
+| `detachCameraFrom(videoElement: HTMLVideoElement): void`  | 将摄像头轨道从视频元素解绑。       |
+| `startAnalyserEmission(): void`                         | 开始发送远端音频分析器数据（~60fps）。 |
+| `stopAnalyserEmission(): void`                          | 停止远端音频分析器并释放 AudioContext。 |
+| `restartAnalyserEmission(): void`                        | 重启远端音频分析器链路。           |
+| `startLocalAnalyserEmission(): void`                     | 开始发送本地麦克风分析器数据（~60fps）。必须在 `startAudioCapture()` 后调用。 |
+| `stopLocalAnalyserEmission(): void`                     | 停止本地麦克风分析器。             |
+| `restartLocalAnalyserEmission(): void`                  | 重启本地麦克风分析器链路。         |
 
 ### 6.4 会话
 
@@ -426,6 +434,7 @@ await client.connect();
 | `media:audio:trackAdded`      | 远端参与者音频轨道订阅   | `undefined` |
 | `media:audio:trackRemoved`    | 远端参与者音频轨道取消订阅 | `undefined` |
 | `media:audio:speakingChanged` | 远端参与者说话状态变化   | `{ participantId: string; isSpeaking: boolean }` |
+| `media:audio:analyserData` | 远端音频分析器数据（~60fps） | `{ frequencyData: Uint8Array; timeDomainData: Uint8Array }` |
 
 **本地麦克风**
 
@@ -433,6 +442,13 @@ await client.connect();
 | ---------------------------- | ------------ | ----------- |
 | `media:audio:captureStarted` | 本地输入开始 | `undefined` |
 | `media:audio:captureStopped` | 本地输入停止 | `undefined` |
+| `media:audio:frameData` | 原始音频帧数据 | `{ data: Float32Array; sampleRate: number }` |
+
+**本地麦克风分析器**
+
+| 事件                                  | 触发时机           | Payload                |
+| ------------------------------------- | ------------------ | ---------------------- |
+| `media:audio:localAnalyserData` | 本地麦克风分析器数据（~60fps） | `{ frequencyData: Uint8Array; timeDomainData: Uint8Array }` |
 
 **本地摄像头**
 
@@ -728,4 +744,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.1.0。_
+_文档版本与包版本一致：1.2.0。_
