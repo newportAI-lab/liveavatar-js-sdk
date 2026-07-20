@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.2.0)
+# Facemarket Live Avatar SDK User Manual (v1.2.1)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.1.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.2.1**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -337,10 +337,10 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `getCameraTrack(): MediaStreamTrack \| null` | Returns the local media track. |
 | `attachCameraTo(videoElement: HTMLVideoElement): void` | Binds the local camera stream to a `<video>` element. |
 | `detachCameraFrom(videoElement: HTMLVideoElement): void` | Detaches the camera track from a video element. |
-| `startAnalyserEmission(): void` | Starts emitting remote audio analyser data (~60fps) via `media:audio:analyserData`. |
+| `startAnalyserEmission(): void` | Starts emitting remote audio analyser data (~60fps) via `media:audio:analyserData`. If no remote audio track has arrived yet, the analyser chain is automatically deferred and will begin emitting once the track is subscribed. |
 | `stopAnalyserEmission(): void` | Stops remote audio analyser emission and releases AudioContext. |
 | `restartAnalyserEmission(): void` | Restarts the remote audio analyser chain. |
-| `startLocalAnalyserEmission(): void` | Starts emitting local microphone analyser data via `media:audio:localAnalyserData`. Must be called **after `startAudioCapture()`** so the microphone stream is available. |
+| `startLocalAnalyserEmission(): void` | Starts emitting local microphone analyser data via `media:audio:localAnalyserData`. If `startAudioCapture()` has not been called yet, the analyser chain is automatically deferred and will begin emitting once the microphone stream becomes available (auto-retried via 100ms polling, max 10s timeout). |
 | `stopLocalAnalyserEmission(): void` | Stops local microphone analyser emission. |
 | `restartLocalAnalyserEmission(): void` | Restarts the local microphone analyser chain. |
 

@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.2.0）
+# Facemarket 实时数字人 SDK 使用手册（v1.2.1）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.2.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.2.1** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -341,10 +341,10 @@ await client.connect();
 | `getCameraTrack(): MediaStreamTrack \| null`             | 本地轨道。                         |
 | `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画面绑定到 `<video>`。 |
 | `detachCameraFrom(videoElement: HTMLVideoElement): void`  | 将摄像头轨道从视频元素解绑。       |
-| `startAnalyserEmission(): void`                         | 开始发送远端音频分析器数据（~60fps）。 |
+| `startAnalyserEmission(): void`                         | 开始发送远端音频分析器数据（~60fps）。若远端音频轨道尚未到达，将自动延迟等待轨道订阅成功后开始发送。 |
 | `stopAnalyserEmission(): void`                          | 停止远端音频分析器并释放 AudioContext。 |
 | `restartAnalyserEmission(): void`                        | 重启远端音频分析器链路。           |
-| `startLocalAnalyserEmission(): void`                     | 开始发送本地麦克风分析器数据（~60fps）。必须在 `startAudioCapture()` 后调用。 |
+| `startLocalAnalyserEmission(): void`                     | 开始发送本地麦克风分析器数据（~60fps）。若麦克风尚未启动，将自动延迟等待 `startAudioCapture()` 成功后开始发送（轮询间隔100ms，最多等待10s）。 |
 | `stopLocalAnalyserEmission(): void`                     | 停止本地麦克风分析器。             |
 | `restartLocalAnalyserEmission(): void`                  | 重启本地麦克风分析器链路。         |
 
