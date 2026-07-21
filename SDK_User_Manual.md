@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.2.1)
+# Facemarket Live Avatar SDK User Manual (v1.3.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.2.1**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.3.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -17,7 +17,15 @@ Integrators can complete the setup via constructor parameters, connection APIs, 
 
 ---
 
-## 2. Initialization
+## 2. Breaking Change Notice (v1.3.0)
+
+**This version is incompatible with v1.2.1.**
+
+v1.3.0 adapts to changes in the backend interface, and the logic for receiving text messages has changed. Please ensure the backend has been updated before upgrading. Re-test all text message-related functionality after upgrading.
+
+---
+
+## 3. Initialization
 
 The SDK distinguishes between two mutually exclusive modes via `ClientOptions.connectConfig`: **Direct** and **Auth**. These two modes differ in their configuration sources, the availability of `setAuthToken` / `updateConnectionConfig`, and their `reconnect` refresh behaviors.
 
@@ -130,15 +138,15 @@ client.setAuthToken('jwt-or-business-token');
 
 ---
 
-## 3. Quick Start
+## 4. Quick Start
 
-### 3.1 Installation
+### 4.1 Installation
 
 ```bash
 npm install @sanseng/liveavatar-js-sdk
 ```
 
-### 3.2 Minimal Workflow (Auth Example)
+### 4.2 Minimal Workflow (Auth Example)
 
 ```ts
 import { createClient } from '@sanseng/liveavatar-js-sdk';
@@ -173,7 +181,7 @@ document.getElementById('mic')?.addEventListener('click', async () => {
 });
 ```
 
-### 3.3 Minimal Workflow (Direct Example)
+### 4.3 Minimal Workflow (Direct Example)
 
 ```ts
 const client = createClient({
@@ -189,9 +197,9 @@ await client.connect();
 
 ---
 
-## 4. Core Concepts
+## 5. Core Concepts
 
-### 4.1 questionId (Turn Correlation Identifier)
+### 5.1 questionId (Turn Correlation Identifier)
 
 `questionId` is the correlation key for a **single complete Q&A turn** (User Query → Server Processing → Streaming/Full Answer). It is used to link:
 
@@ -206,12 +214,12 @@ await client.connect();
 
 **Strong Recommendation**: Upon receiving `conversation:answer:completed`, clear the local buffers (text concatenation, UI states, etc.) associated with that `questionId` to prevent memory growth and display errors caused by ID reuse.
 
-### 4.2 Control Plane and Media Plane
+### 5.2 Control Plane and Media Plane
 
 - **Media Plane**: Handled by `LiveKitService`, which manages LiveKit room connections, audio/video track subscription and publishing, and the transmission of session text and protocol messages via the **Data Channel**.
 - **Control Plane (Auth)**: Handled by `HttpController` + `ConfigManager`. This plane is responsible for fetching the `livekitUrl`, `token`, `roomId`, and optional server-side `videoOptions` (such as green screen toggles) in Auth Mode. There is **no** independent "Business WebSocket" channel parallel to LiveKit exposed in the external API.
 
-### 4.3 Video Rendering Modes
+### 5.3 Video Rendering Modes
 
 - `video.renderMode === 'raw'`: Remote tracks are rendered directly onto the `<video>` element (default behavior depends on options).
 - `video.renderMode === 'processed'`: Renders via a Canvas processing pipeline (e.g., for green screen/chroma key).
@@ -219,11 +227,11 @@ await client.connect();
 
 ---
 
-## 5. Configuration (`createClient` Parameters)
+## 6. Configuration (`createClient` Parameters)
 
 `createClient(options: ClientOptions)`. The definition of `ClientOptions` can be found in `src/types/ClientOptions.d.ts`.
 
-### 5.1 Top-level Fields
+### 6.1 Top-level Fields
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
@@ -236,7 +244,7 @@ await client.connect();
 | `sandbox` | `boolean` | No | Sandbox toggle (based on backend business logic agreement). |
 | `debug` | `boolean` | No | Enables debug logging. |
 
-### 5.2 `connectConfig`
+### 6.2 `connectConfig`
 
 **Direct Mode**
 
@@ -255,7 +263,7 @@ await client.connect();
 | `config.authToken` | `string` | No (Can be used interchangeably or combined with `setAuthToken`). |
 | `config.avatarVoice` | `string` | No |
 
-### 5.3 `video` (`VideoOptions`)
+### 6.3 `video` (`VideoOptions`)
 
 | Field | Description |
 | :--- | :--- |
@@ -266,7 +274,7 @@ await client.connect();
 | `fitMode` | `'contain' \| 'cover' \| 'fill' \| 'none'` |
 | `debug` | Inherited from `BaseOptions`. |
 
-### 5.4 `audio` (`AudioOptions`)
+### 6.4 `audio` (`AudioOptions`)
 
 | Field | Description |
 | :--- | :--- |
@@ -275,14 +283,14 @@ await client.connect();
 
 **Note**: `channelCount` is optional and defaults to `1`. `noiseSuppression`, `echoCancellation`, and `autoGainControl` default to `true` when not explicitly set.
 
-### 5.5 `performanceMonitor`
+### 6.5 `performanceMonitor`
 
 | Field | Description |
 | :--- | :--- |
 | `enabled` | Defaults to `true`; set to `false` to disable built-in performance collection. |
 | `reporter` | `(metric: PerformanceMetricRecord) => void` Custom reporting callback. |
 
-### 5.6 `MicrophoneStats`
+### 6.6 `MicrophoneStats`
 
 | Field | Description |
 | :--- | :--- |
@@ -293,11 +301,11 @@ await client.connect();
 
 ---
 
-## 6. Core API Methods
+## 7. Core API Methods
 
 All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except for the constructor, `setAuthToken`, and `updateConnectionConfig`, most media and session APIs require a **successful `connect()`** (verified internally via `sessionState.isConnected`).
 
-### 6.1 Connection & Lifecycle
+### 7.1 Connection & Lifecycle
 
 | Method | Description |
 | :--- | :--- |
@@ -309,14 +317,14 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 
 **Constraint**: Due to browser policies, **audio playback** and **microphone capture** should ideally be triggered by `connect()` / `startAudioCapture()` within a user gesture (e.g., click) callback.
 
-### 6.2 Authentication & Connection Config
+### 7.2 Authentication & Connection Config
 
 | Method | Description |
 | :--- | :--- |
 | `setAuthToken(token: string): void` | Sets the auth token; used by HTTP and Config components in **Auth Mode**. |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `preConnect()` / `connect()` or `reconnect()` via `replaceDirectConfig`. |
 
-### 6.3 Media
+### 7.3 Media
 
 | Method | Description |
 | :--- | :--- |
@@ -344,14 +352,14 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `stopLocalAnalyserEmission(): void` | Stops local microphone analyser emission. |
 | `restartLocalAnalyserEmission(): void` | Restarts the local microphone analyser chain. |
 
-### 6.4 Session
+### 7.4 Session
 
 | Method | Description |
 | :--- | :--- |
 | `sendTextQuestion(text: string): Promise<string>` | Sends a text query; returns a **Message UID** (used as `questionId` in events for turn correlation). |
 | `interrupt(): Promise<void>` | Sends an interruption control event (`control.interrupt`). |
 
-### 6.5 State & Observability
+### 7.5 State & Observability
 
 | Member | Description |
 | :--- | :--- |
@@ -361,7 +369,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
 | `get events(): PublicEmitterAPI` | Accesses the event emitter (supports `on`, `off`, `once` only). |
 
-### 6.6 Version Information
+### 7.6 Version Information
 
 | Member | Description |
 | :--- | :--- |
@@ -370,7 +378,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 
 ---
 
-## 7. Public Events
+## 8. Public Events
 
 Events are subscribed to via `client.events.on(eventName, listener)`. Only the event names in the following whitelist are supported; other names will result in an error.
 
@@ -481,7 +489,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 
 ---
 
-## 8. Full Usage Example
+## 9. Full Usage Example
 
 ```ts
 import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
@@ -566,14 +574,14 @@ await client.reconnect();
 
 ---
 
-## 9. Video Chroma Key (Green Screen) Debugging Guide
+## 10. Video Chroma Key (Green Screen) Debugging Guide
 
 Before enabling Chroma Key, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection):
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
 
-### 9.1 Tuning Recommendations
+### 10.1 Tuning Recommendations
 
 1. **Background Color Selection (`chromaKey`)**
    - Recommended to pick colors from actual video screenshots.
@@ -596,7 +604,7 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
 
 ---
 
-## 10. FAQ
+## 11. FAQ
 
 **No video display or black screen**
 
@@ -619,11 +627,11 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
 
 ---
 
-## 11. Error Codes
+## 12. Error Codes
 
 The following are the string values for the `ErrorCode` enum (`src/errors/ErrorCodes.ts`), consistent with the `code` field in `sdk:error` and thrown `SDKError` objects.
 
-### 11.1 HTTP & Control Plane
+### 12.1 HTTP & Control Plane
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -633,7 +641,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `SDK_INTERRUPT_CONVERSATION_FAILED` | Failed to send interruption command. |
 | `HTTP_CONTROLLER_NOT_AVAILABLE` | HTTP controller is not ready. Avoid calling HTTP-dependent operations. |
 
-### 11.2 SDK Lifecycle
+### 12.2 SDK Lifecycle
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -646,7 +654,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `SDK_INVALID_STATE_TRANSITION` | Illegal state transition (e.g., calling `updateConnectionConfig` in Auth mode). |
 | `SDK_ERROR` | Generic fallback error code. |
 
-### 11.3 LiveKit / RTC
+### 12.3 LiveKit / RTC
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -656,7 +664,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR` | Failed to parse data message. Check protocol version compatibility. |
 | `LIVEKIT_UNPUBLISH_MICROPHONE_FAILED` | Failed to unpublish the microphone track. |
 
-### 11.4 Audio
+### 12.4 Audio
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -666,20 +674,20 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
 | `AUDIO_OUTPUT_DISABLED` | Thrown by `getAudioElement()` when `output.enabled === false`. |
 
-### 11.5 Camera
+### 12.5 Camera
 
 | Code | Description |
 | :--- | :--- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | Camera controller is unavailable. |
 
-### 11.6 Session & State Machine
+### 12.6 Session & State Machine
 
 | Code | Description & Recommendation |
 | :--- | :--- |
 | `CONVERSATION_CONTROLLER_NOT_AVAILABLE` | Conversation controller is unavailable. |
 | `STATE_MACHINE_INVALID_STATE_TRANSITION` | Internal state machine received illegal transition. Provide logs for feedback. |
 
-### 11.7 Utilities & Others
+### 12.7 Utilities & Others
 
 | Code | Description |
 | :--- | :--- |
@@ -690,9 +698,9 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 
 ---
 
-## 12. Performance Monitoring & Troubleshooting
+## 13. Performance Monitoring & Troubleshooting
 
-### 12.1 Built-in Metrics
+### 13.1 Built-in Metrics
 
 Enabled by default (`performanceMonitor.enabled !== false`). The metric names under `PerformanceMetricName` include:
 
@@ -705,7 +713,7 @@ Enabled by default (`performanceMonitor.enabled !== false`). The metric names un
 
 Data structure: `PerformanceMetricRecord` (contains `metric`, `durationMs`, `startedAt`, `endedAt`, and optional `questionId`).
 
-### 12.2 Custom Reporting
+### 13.2 Custom Reporting
 
 ```ts
 import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
@@ -728,7 +736,7 @@ client.setPerformanceMetricReporter((metric) => {
 });
 ```
 
-### 12.3 Troubleshooting Recommendations
+### 13.3 Troubleshooting Recommendations
 
 - **Slow First Frame**: Check region latency, TURN server status, and whether repeated `connect()` retries are occurring.
 - **Slow Text Response**: Correlate with backend LLM/business processing time and check for main-thread blocking.
@@ -736,4 +744,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.2.0._
+_Document version consistent with package version: 1.3.0._

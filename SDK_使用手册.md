@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.2.1）
+# Facemarket 实时数字人 SDK 使用手册（v1.3.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.2.1** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.3.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -17,7 +17,15 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ---
 
-## 2. 初始化说明
+## 2. 破坏性升级说明（v1.3.0）
+
+**本版本与 v1.2.1 不兼容。**
+
+v1.3.0 对后端接口进行了适配，文本消息获取逻辑发生变化。升级前请确认后端已同步更新。升级后请重新测试相关文本消息功能。
+
+---
+
+## 3. 初始化说明
 
 SDK 通过 `ClientOptions.connectConfig` 区分两种互斥模式：**Direct（直连）** 与 **Auth（鉴权）**。二者在配置来源、`setAuthToken` / `updateConnectionConfig` 的可用性及 `reconnect` 刷新行为上不同。
 
@@ -134,15 +142,15 @@ client.setAuthToken('jwt-or-business-token');
 
 ---
 
-## 3. 快速开始
+## 4. 快速开始
 
-### 3.1 安装
+### 4.1 安装
 
 ```bash
 npm install @sanseng/liveavatar-js-sdk
 ```
 
-### 3.2 最小流程（Auth 示例）
+### 4.2 最小流程（Auth 示例）
 
 ```ts
 import { createClient } from '@sanseng/liveavatar-js-sdk';
@@ -177,7 +185,7 @@ document.getElementById('mic')?.addEventListener('click', async () => {
 });
 ```
 
-### 3.3 最小流程（Direct 示例）
+### 4.3 最小流程（Direct 示例）
 
 ```ts
 const client = createClient({
@@ -193,9 +201,9 @@ await client.connect();
 
 ---
 
-## 4. 核心概念
+## 5. 核心概念
 
-### 4.1 questionId（问答关联标识）
+### 5.1 questionId（问答关联标识）
 
 `questionId` 是**一次完整问答对**（用户提问 → 服务端处理 → 流式/完整回答）的关联键，用于串联：
 
@@ -210,12 +218,12 @@ await client.connect();
 
 **强烈建议**：在收到 `conversation:answer:completed` 后，清理该 `questionId` 对应的本地缓冲（文本拼接、UI 状态等），避免内存增长与 ID 复用带来的展示错误。
 
-### 4.2 控制面与媒体面
+### 5.2 控制面与媒体面
 
 - **媒体面**：LiveKit 房间连接、音视频轨道的订阅与发布、会话文本与协议消息的 **Data Channel** 传输，均由 `LiveKitService` 统一承载。
 - **控制面（Auth）**：`HttpController` + `ConfigManager` 负责在鉴权模式下获取 `livekitUrl`、`token`、`roomId` 及服务端可选的 `videoOptions`（如绿幕开关）。**不存在**与 LiveKit 并行的独立「业务 WebSocket」通道对外 API。
 
-### 4.3 视频渲染模式
+### 5.3 视频渲染模式
 
 - `video.renderMode === 'raw'`：直接在 `<video>` 上渲染远端轨道（默认类行为以选项为准）。
 - `video.renderMode === 'processed'`：经 Canvas 处理管线（如绿幕）。
@@ -223,11 +231,11 @@ await client.connect();
 
 ---
 
-## 5. 配置说明（`createClient` 构造参数）
+## 6. 配置说明（`createClient` 构造参数）
 
 `createClient(options: ClientOptions)`，`ClientOptions` 定义见 `src/types/ClientOptions.d.ts`。
 
-### 5.1 顶层字段
+### 6.1 顶层字段
 
 | 字段                 | 类型                        | 必填 | 说明                                                                                    |
 | -------------------- | --------------------------- | ---- | --------------------------------------------------------------------------------------- |
@@ -240,7 +248,7 @@ await client.connect();
 | `sandbox`            | `boolean`                   | 否   | 沙箱开关（依业务后端约定）                                                              |
 | `debug`              | `boolean`                   | 否   | 调试日志                                                                                |
 
-### 5.2 `connectConfig`
+### 6.2 `connectConfig`
 
 **Direct**
 
@@ -259,7 +267,7 @@ await client.connect();
 | `config.authToken`   | `string` | 否（可与 `setAuthToken` 二选一或组合） |
 | `config.avatarVoice` | `string` | 否                                     |
 
-### 5.3 `video`（`VideoOptions`）
+### 6.3 `video`（`VideoOptions`）
 
 | 字段               | 说明                                                                  |
 | ------------------ | --------------------------------------------------------------------- |
@@ -270,7 +278,7 @@ await client.connect();
 | `camera`           | `{ publishToLiveKit?: boolean }`                                      | 默认 `false`；为 `true` 时 `startCamera()` 将轨道发布到 LiveKit 房间。 |
 | `debug`            | 继承 `BaseOptions`                                                    |
 
-### 5.4 `audio`（`AudioOptions`）
+### 6.4 `audio`（`AudioOptions`）
 
 | 字段     | 说明                                                                                                                                                                                                                                                          |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -279,14 +287,14 @@ await client.connect();
 
 **注意**：`channelCount` 为可选，默认为 `1`。`noiseSuppression`、`echoCancellation`、`autoGainControl` 未设置时默认值为 `true`。
 
-### 5.5 `performanceMonitor`
+### 6.5 `performanceMonitor`
 
 | 字段       | 说明                                                   |
 | ---------- | ------------------------------------------------------ |
 | `enabled`  | 默认 `true`；`false` 关闭内置性能采集                  |
 | `reporter` | `(metric: PerformanceMetricRecord) => void` 自定义上报 |
 
-### 5.6 `MicrophoneStats`
+### 6.6 `MicrophoneStats`
 
 | 字段            | 说明             |
 | --------------- | ---------------- |
@@ -297,11 +305,11 @@ await client.connect();
 
 ---
 
-## 6. 核心 API 方法
+## 7. 核心 API 方法
 
 以下方法均定义于 `SDKClient`（`src/client/SDKClient.ts`）。除构造与 `setAuthToken` / `updateConnectionConfig` 外，多数媒体与会话 API 要求 **已成功 `connect()`**（内部通过 `sessionState.isConnected` 校验）。
 
-### 6.1 连接与生命周期
+### 7.1 连接与生命周期
 
 | 方法                                       | 说明                                                                                                      |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
@@ -313,14 +321,14 @@ await client.connect();
 
 **约束**：浏览器策略下，**带声音的播放**与 **麦克风采集** 建议在用户手势（点击等）回调内触发 `connect()` / `startAudioCapture()`。
 
-### 6.2 鉴权与连接配置
+### 7.2 鉴权与连接配置
 
 | 方法                                                           | 说明                                                                                                                                                                          |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                     |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
-### 6.3 媒体
+### 7.3 媒体
 
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
@@ -348,14 +356,14 @@ await client.connect();
 | `stopLocalAnalyserEmission(): void`                     | 停止本地麦克风分析器。             |
 | `restartLocalAnalyserEmission(): void`                  | 重启本地麦克风分析器链路。         |
 
-### 6.4 会话
+### 7.4 会话
 
 | 方法                                              | 说明                                                                                  |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `sendTextQuestion(text: string): Promise<string>` | 发送文本问题；返回 **消息 UID**（实现上用作问答关联，与事件中的 `questionId` 对应）。 |
 | `interrupt(): Promise<void>`                      | 发送打断控制事件（`control.interrupt`）。                                             |
 
-### 6.5 状态与可观测性
+### 7.5 状态与可观测性
 
 | 成员                                                                       | 说明                                                                                    |
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -365,7 +373,7 @@ await client.connect();
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
 
-### 6.6 版本信息
+### 7.6 版本信息
 
 | 成员                        | 说明                   |
 | --------------------------- | ---------------------- |
@@ -374,7 +382,7 @@ await client.connect();
 
 ---
 
-## 7. 公共事件介绍
+## 8. 公共事件介绍
 
 事件通过 `client.events.on(eventName, listener)` 订阅。事件名**仅**下列白名单，其余名称会抛错。
 
@@ -485,7 +493,7 @@ await client.connect();
 
 ---
 
-## 8. 完整使用示例
+## 9. 完整使用示例
 
 ```ts
 import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
@@ -570,14 +578,14 @@ await client.reconnect();
 
 ---
 
-## 9. 视频绿幕参数调试指南
+## 10. 视频绿幕参数调试指南
 
 在启用绿幕前，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
 
-### 9.1 参数调试建议
+### 10.1 参数调试建议
 
 1. **背景取色（`chromaKey`）**
    - 建议从真实视频截图中取色
@@ -600,7 +608,7 @@ await client.reconnect();
 
 ---
 
-## 10. 常见问题
+## 11. 常见问题
 
 **视频无画面或黑屏**
 
@@ -627,11 +635,11 @@ await client.reconnect();
 
 ---
 
-## 11. 错误代码
+## 12. 错误代码
 
 以下为 `ErrorCode` 枚举（`src/errors/ErrorCodes.ts`）的字符串值，与 `sdk:error` 及抛出 `SDKError` 的 `code` 一致。
 
-### 11.1 HTTP 与控制面
+### 12.1 HTTP 与控制面
 
 | 代码                                | 说明与处理建议                                                          |
 | ----------------------------------- | ----------------------------------------------------------------------- |
@@ -641,7 +649,7 @@ await client.reconnect();
 | `SDK_INTERRUPT_CONVERSATION_FAILED` | 打断指令发送失败。                                                      |
 | `HTTP_CONTROLLER_NOT_AVAILABLE`     | HTTP 控制器未就绪；避免在错误生命周期调用依赖 HTTP 的操作。             |
 
-### 11.2 SDK 生命周期
+### 12.2 SDK 生命周期
 
 | 代码                           | 说明与处理建议                                                        |
 | ------------------------------ | --------------------------------------------------------------------- |
@@ -654,7 +662,7 @@ await client.reconnect();
 | `SDK_INVALID_STATE_TRANSITION` | 非法状态迁移（如 Auth 模式调用 `updateConnectionConfig`）。           |
 | `SDK_ERROR`                    | 通用回退错误码。                                                      |
 
-### 11.3 LiveKit / RTC
+### 12.3 LiveKit / RTC
 
 | 代码                                        | 说明与处理建议                           |
 | ------------------------------------------- | ---------------------------------------- |
@@ -664,7 +672,7 @@ await client.reconnect();
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR`          | 数据消息解析失败；核对协议版本。         |
 | `LIVEKIT_UNPUBLISH_MICROPHONE_FAILED`       | 取消麦克风发布失败。                     |
 
-### 11.4 音频
+### 12.4 音频
 
 | 代码                                                                          | 说明与处理建议                                                       |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -674,20 +682,20 @@ await client.reconnect();
 | `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                                               |
 | `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
 
-### 11.5 摄像头
+### 12.5 摄像头
 
 | 代码                              | 说明与处理建议       |
 | --------------------------------- | -------------------- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | 摄像头控制器不可用。 |
 
-### 11.6 会话与状态机
+### 12.6 会话与状态机
 
 | 代码                                     | 说明与处理建议                         |
 | ---------------------------------------- | -------------------------------------- |
 | `CONVERSATION_CONTROLLER_NOT_AVAILABLE`  | 会话控制器不可用。                     |
 | `STATE_MACHINE_INVALID_STATE_TRANSITION` | 内部状态机收到非法迁移；收集日志反馈。 |
 
-### 11.7 工具与其它
+### 12.7 工具与其它
 
 | 代码                     | 说明与处理建议                        |
 | ------------------------ | ------------------------------------- |
@@ -698,9 +706,9 @@ await client.reconnect();
 
 ---
 
-## 12. 性能监控与排查
+## 13. 性能监控与排查
 
-### 12.1 内置指标
+### 13.1 内置指标
 
 默认开启（`performanceMonitor.enabled !== false`）。指标名 `PerformanceMetricName`：
 
@@ -713,7 +721,7 @@ await client.reconnect();
 
 记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`）。
 
-### 12.2 自定义上报
+### 13.2 自定义上报
 
 ```ts
 import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
@@ -736,7 +744,7 @@ client.setPerformanceMetricReporter((metric) => {
 });
 ```
 
-### 12.3 排查建议
+### 13.3 排查建议
 
 - **首帧慢**：检查地域、TURN、是否重复失败重试 `connect()`。
 - **文本响应慢**：结合后端 LLM/业务耗时与主线程阻塞。
@@ -744,4 +752,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.2.0。_
+_文档版本与包版本一致：1.3.0。_
