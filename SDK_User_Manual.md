@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v1.3.0)
+# Facemarket Live Avatar SDK User Manual (v2.2.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 1.3.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.2.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -242,7 +242,10 @@ await client.connect();
 | `http` | `{ baseURL?, headers? }` | No | Root path and default headers for Auth and HTTP control interfaces. |
 | `performanceMonitor` | `PerformanceMonitorOptions` | No | Enabled by default; set `enabled: false` to disable. |
 | `sandbox` | `boolean` | No | Sandbox toggle (based on backend business logic agreement). |
-| `debug` | `boolean` | No | Enables debug logging. |
+| `debug` | `boolean \| DebugOptions` | No | Optional Debug, LiveKit verbose, and A/V diagnostic configuration; see Section 7, “Debug and A/V Diagnostics.” |
+| `plugins` | `readonly SDKPlugin[]` | No | Plugins installed at construction. Pass an `SDKPlugin` imported from a plugin package; one failed install does not prevent client construction. See the [Plugin Integration Guide](./SDK_Plugin_Integration_Guide.md). |
+
+This chapter lists constructor parameters only. See Section 7 for the full Debug logging, A/V diagnostics, automatic video-stall alerts, and experimental frame-metadata worker configuration and behavior.
 
 ### 6.2 `connectConfig`
 
@@ -301,11 +304,113 @@ await client.connect();
 
 ---
 
-## 7. Core API Methods
+## 7. Debug and A/V Diagnostics
+
+### 7.1 Basic Debug and LiveKit Verbose
+
+`debug: true` and `debug: {}` enable SDK Debug logs only; only `debug: { verbose: true }` enables LiveKit JS SDK internal Debug logs. SDK and LiveKit loggers are runtime-global in the current page: each client creation applies its configuration; SDK logging returns to `ERROR` when `debug` is `false` or omitted, and LiveKit logging returns to `info` unless `verbose: true`. Disposing a client also restores both defaults. Therefore, the last created or disposed SDK client affects the log level of other SDK or LiveKit clients in the same page.
+
+### 7.2 Periodic A/V Diagnostics (`debug.avSync`)
+
+Use the following configuration to sample remote audio/video receiver statistics after the LiveKit Room connects; no polling runs by default:
+
+```ts
+debug: {
+  avSync: { enabled: true, intervalMs: 2000, historyLimit: 60 },
+}
+```
+
+Background sampling waits up to 10 seconds for the first remote audio or video track accepted by the renderer-participant filter. On timeout, it stops for the current connection session and retains `remote-track-wait-timeout` for upload. This timeout does not affect manual `captureRemoteAvSyncDiagnostics()`.
+
+Offline evidence is returned by pages from `getAvSyncRawTelemetry(query?)`, not `[RTC remote-media]` Console output: the no-argument call returns at most the latest five minutes and 200 logs, while `range`, `pageSize`, and `page.nextCursor` retrieve further records. Log queries and fact-only summaries run in a Dedicated Worker; manual capture still reads current WebRTC stats on the browser main thread. `avSyncLogRetention` reports retained counts, storage errors, and drops. Room disconnect freezes the final session for paged queries; reconnect replaces it, while `dispose()` and failed connection attempts clear it.
+
+### 7.3 Automatic Video-Stall Alerts
+
+With `debug.avSync` enabled, callers do not need to poll `getAvSyncAnalysis()` to receive automatic video-pipeline alerts. After the shared `<video>` has emitted `playing`, the SDK confirms receive, decode, and browser-presentation stalls as `video_receive`, `video_decode`, and `video_render` after three compatible periodic samples. `video_render` is detected only after a supported `requestVideoFrameCallback` has produced a presentation baseline while the page is visible. The SDK does not reconnect, re-subscribe, or restart playback automatically.
+
+Automatic alerts form one continuous incident lifecycle: the first confirmed incident emits `phase: "raised"`; the same confirmed classification remains active but intentionally emits no duplicate event or `video-pipeline-stalled` log; a newly confirmed receive/decode/render classification on the same video track emits `phase: "updated"`; only direct positive progress at the affected receive/decode/render layer emits `phase: "recovered"`. Therefore, the absence of a new alert event or retained log **does not mean recovery**.
+
+Every lifecycle payload has an opaque `alertId`. A `raised`, `updated`, and final `recovered` for one active incident retain the same ID. `updated` supplies `previousFinding` and may change `finding`; applications must keep the incident active until `recovered`, rather than using no new alert as a normal signal:
+
+```ts
+const activeAlerts = new Map<string, AvSyncAlertEvent>();
+
+client.events.on(`sdk:avSyncAlert`, (alert) => {
+  if (alert.phase === "recovered") {
+    activeAlerts.delete(alert.alertId);
+    return;
+  }
+
+  // Both raised and updated mean the incident remains active.
+  activeAlerts.set(alert.alertId, alert);
+});
+```
+
+All alert phases reach the stable public `sdk:avSyncAlert` event and can also be received by installed plugins; see the [Plugin Integration Guide](./SDK_Plugin_Integration_Guide.md) for plugin integration. Only the first `raised` writes the retained `video-pipeline-stalled` diagnostic fact. The SDK never uploads alerts or logs automatically. Listening to the public event without polling `getAvSyncAnalysis()` covers these automatic periodic-observation transitions. However, `getAvSyncAnalysis()` also evaluates the retained window for track binding, transport degradation, audio concealment, playback, and relative drift. Those manual-analysis findings can become alerts only after the application calls the analysis API.
+
+### 7.4 Experimental Frame Metadata Worker
+
+Periodic A/V statistics and TimeSync do not enable the experimental frame metadata worker by default. To enable it, periodic diagnostics must also be enabled and `frameMetadata: true` must be set:
+
+```ts
+debug: {
+  avSync: { enabled: true, frameMetadata: true },
+}
+```
+
+Its purpose is to add correlatable frame metadata to **remote video frames**. When the publisher advertises the relevant packet-trailer feature, the track supports metadata lookup, and an associated TimeSync RTP timestamp is available, the SDK requests the LiveKit frame metadata worker and associates `frameId`, `userTimestamp`, and `userData` with receiver baselines and video-presentation events. This adds bounded `frameMetadata` samples and metadata-bearing TimeSync/receive-side evidence to `getAvSyncRawTelemetry()`, helping investigate the path from receipt of a publisher video frame to its presentation.
+
+When `userData` is an ASCII-decimal publisher Unix capture timestamp in microseconds, the metadata association is fresh, and the frame is not a duplicate, the SDK also fills `videoCaptureToDisplayRawMs` and its relative change for capture-to-display diagnostic evidence. If `userData` is not in that format, it is preserved as-is and the timing fields remain `null`; the SDK never invents a timestamp or precise latency.
+
+This option is **not** required for regular WebRTC receiver stats, periodic sampling, TimeSync, the RTP-based relative-drift timeline, or automatic `video_receive` / `video_decode` / `video_render` alerts. Those capabilities continue when it is disabled; only per-frame metadata and capture-to-display evidence are omitted. Metadata applies only to remote video and depends on browser/worker support, publisher feature advertisement, track lookup, and TimeSync RTP correlation. When any prerequisite is unavailable, telemetry preserves the unavailable or unobserved fact and the associated metadata fields are `null` or empty.
+
+`userData` is retained in bounded diagnostics telemetry as raw Base64, so enable this option only when that payload is suitable for client-side diagnostic data. If the worker fails to initialize or encounters a runtime error, the SDK reports it with the `[RTC frame-metadata-worker]` prefix in Chrome DevTools and retains the worker state as a diagnostic-log fact. The normal LiveKit connection and base A/V diagnostics continue to work, and diagnostics APIs do not reject because of that failure.
+
+### 7.5 Plugin import and configuration
+
+For plugin development, extension points, and runtime semantics, see the [Plugin Integration Guide](./SDK_Plugin_Integration_Guide.md). To use a plugin, import an `SDKPlugin` object from its own package. Replace the placeholders below with the package and export supplied by an actual entry in “Currently Supported Plugin Packages.”
+
+```ts
+import { createClient } from '@sanseng/liveavatar-js-sdk';
+import { plugin } from '<plugin-package>';
+
+const options = {
+  connectConfig: {
+    type: 'direct',
+    config: { sfuUrl: 'wss://example.test', userToken: 'token' },
+  },
+} as const;
+
+// Choose one: construction-time installation
+const configuredClient = createClient({ ...options, plugins: [plugin] });
+
+// Choose one: runtime installation on an instance without that plugin ID
+const runtimeClient = createClient(options);
+const result = runtimeClient.installPlugin(plugin);
+if (result.status === 'rejected') {
+  console.warn(result.pluginId, result.reason, result.message);
+}
+
+runtimeClient.uninstallPlugin(plugin.id);
+```
+
+Do not include the same plugin ID in both `plugins` and `installPlugin()` on the same instance. Check the runtime installation result. `uninstallPlugin()` returns `true` when it removed an active plugin and `false` when that ID is not active in the instance.
+
+#### Currently Supported Plugin Packages
+
+| Plugin package | Purpose | Status |
+| --- | --- | --- |
+| None | No standalone plugin package is published or registered for v2.2.0. SDK extension points are not directly installable plugin packages. | No available package |
+
+This table will list package names, installation commands, and links once actual plugin packages are released.
+
+---
+
+## 8. Core API Methods
 
 All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except for the constructor, `setAuthToken`, and `updateConnectionConfig`, most media and session APIs require a **successful `connect()`** (verified internally via `sessionState.isConnected`).
 
-### 7.1 Connection & Lifecycle
+### 8.1 Connection & Lifecycle
 
 | Method | Description |
 | :--- | :--- |
@@ -313,18 +418,20 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `connect(): Promise<void>` | Establishes the Coordinator, Domain Controllers, and LiveKit connection. Calls pre-connect internally if no valid cache exists. |
 | `disconnect(): Promise<void>` | Stops capture, disconnects LiveKit, and cleans up HTTP sessions. The instance can still be used for `connect()` or `reconnect()`. |
 | `reconnect(): Promise<ConnectionSnapshot>` | Manual reconnection: `disconnect()` is called first, then config is refreshed based on mode before calling `connect()`. Returns a snapshot if reconnection is not allowed. |
+| `installPlugin(plugin): SDKPluginInstallResult` | Atomically installs a Plugin API v1 plugin. Rejection is returned as data and does not affect the SDK lifecycle. |
+| `uninstallPlugin(pluginId: string): boolean` | Atomically removes contributions, invalidates old handles, and calls plugin dispose. |
 | `dispose(): void` | Releases all resources. The instance **must not** be used after this call. |
 
 **Constraint**: Due to browser policies, **audio playback** and **microphone capture** should ideally be triggered by `connect()` / `startAudioCapture()` within a user gesture (e.g., click) callback.
 
-### 7.2 Authentication & Connection Config
+### 8.2 Authentication & Connection Config
 
 | Method | Description |
 | :--- | :--- |
 | `setAuthToken(token: string): void` | Sets the auth token; used by HTTP and Config components in **Auth Mode**. |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `preConnect()` / `connect()` or `reconnect()` via `replaceDirectConfig`. |
 
-### 7.3 Media
+### 8.3 Media
 
 | Method | Description |
 | :--- | :--- |
@@ -352,14 +459,14 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `stopLocalAnalyserEmission(): void` | Stops local microphone analyser emission. |
 | `restartLocalAnalyserEmission(): void` | Restarts the local microphone analyser chain. |
 
-### 7.4 Session
+### 8.4 Session
 
 | Method | Description |
 | :--- | :--- |
 | `sendTextQuestion(text: string): Promise<string>` | Sends a text query; returns a **Message UID** (used as `questionId` in events for turn correlation). |
 | `interrupt(): Promise<void>` | Sends an interruption control event (`control.interrupt`). |
 
-### 7.5 State & Observability
+### 8.5 State & Observability
 
 | Member | Description |
 | :--- | :--- |
@@ -367,9 +474,21 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `get connectionSnapshot(): ConnectionSnapshot` | Synchronous read-only snapshot: `http.connected`, `rtc.connected`, `rtc.hasVideoTrack`, `overall.state`. |
 | `get sessionId(): string \| undefined` | Server-assigned session ID. **Auth mode only**; returns `undefined` in direct mode and logs a debug message. |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
+| `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>` | Actively captures remote audio/video receiver statistics and this connection's track lifecycle nodes; available without debug configuration. |
+| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>` | Reads current bounded context plus one `avSyncLogs` page. The default is the latest five minutes and 200 logs; use `range`, `pageSize`, and `page.nextCursor` to paginate. A fact-only window summary is enabled by default and can be disabled with `includeSummary: false`; log queries and aggregation run in a Dedicated Worker. |
+| `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | Asynchronously analyzes the complete retained window in the telemetry Worker. The caller controls polling cadence; the report exposes stable `status`, `finding`, `features`, `layers`, and bounded limitations, and ordinary evidence gaps do not reject the promise. Automatic video-stall notification does not depend on calling this method. |
 | `get events(): PublicEmitterAPI` | Accesses the event emitter (supports `on`, `off`, `once` only). |
 
-### 7.6 Version Information
+All `getAvSyncAnalysis()` counters are **deltas within the requested analysis window**. Browser WebRTC cumulative receiver counters are never treated as a current anomaly. Important `features` fields are:
+
+- `audioObservationDurationMs`: total observation time across valid remote-audio delta intervals.
+- `audioConcealedSamplesDelta` / `audioConcealmentEventsDelta`: audio concealment increments in the window.
+- `audioConcealedSamplesPerSecond` / `audioConcealmentEventsPerSecond`: the corresponding increments divided by the observation duration; `null` when no valid audio delta interval exists.
+- `videoPacketsLostDelta`, `videoFramesReceivedDelta`, `videoFramesDroppedDelta`, and `videoFramesDecodedDelta`: remote-video increments in the window; received/decoded progression helps distinguish receive/assembly from decode stalls.
+
+For multiple remote participants, the global audio-rate denominator is the sum of valid remote-audio channel observation durations. `participants` and alert participant IDs contain only identities with remote-media evidence in the requested window; local and connection-only identities are excluded.
+
+### 8.6 Version Information
 
 | Member | Description |
 | :--- | :--- |
@@ -378,7 +497,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 
 ---
 
-## 8. Public Events
+## 9. Public Events
 
 Events are subscribed to via `client.events.on(eventName, listener)`. Only the event names in the following whitelist are supported; other names will result in an error.
 
@@ -407,10 +526,20 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 - **Trigger**: Dispatched when an internal error is mapped to a secure external payload.
 - **Payload**: `{ message: string; code: string }` (`code` is the string value of `ErrorCode`).
 
+### `sdk:pluginFault`
+
+- **Trigger**: An isolated plugin Observer/Transform/Provider/CoreService/dispose failure.
+- **Payload**: Only `pluginId`, optional `contributionId` / `{ id, major, kind }` point descriptor, `phase`, `reason`, and `occurredAtMs`. It never exposes Error, stack, tokens, business text, raw protocol payloads, or private plugin data, and is excluded from the Operational Log Observer.
+
 ### `sdk:connectionStateChanged`
 
 - **Trigger**: When LiveKit connection state changes (disconnected/connecting/connected/reconnecting).
 - **Payload**: `{ state: ConnectionState }`, where `ConnectionState` enum: `disconnected` | `connecting` | `connected` | `reconnecting` | `signalReconnecting`.
+
+### `sdk:avSyncAlert`
+
+- **Trigger**: This is the lifecycle of one A/V incident: `raised` appears on first confirmed attention evidence, `updated` appears when the same active automatic video pipeline is confirmed with another receive/decode/render classification, and `recovered` appears only when direct positive progress is observed at the affected layer. Sustained identical faults are intentionally deduplicated; no new event or log is not recovery. Under `debug.avSync`, a playing video whose RTP packets, received frames, and decoded frames all make no progress for three compatible periodic samples automatically reports `video_receive`; confirmed decode and presentation stalls additionally report `video_decode` / `video_render`. `insufficient_evidence` alone does not raise an alert.
+- **Payload**: A bounded `AvSyncAlertEvent` containing `phase`, stable opaque `alertId`, `finding`, `previousFinding`, `status`, `confidence`, `sessionId`, `capturedAtMs`, participant IDs, an English message, and compact boolean features. `previousFinding` is null for raised and identifies the preceding abnormal classification for updated/recovered. Participant IDs identify only remote media participants that produced the finding; raw logs, media objects, local identities, and connection-only identities are never exposed. All phases go only to the public event and plugin handlers; only the first raised alert creates the retained stall log, and the SDK does not upload externally.
 
 ### `sdk:connectionQualityChanged`
 
@@ -475,11 +604,13 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | :--- | :--- | :--- |
 | `conversation:question:sent` | Question successfully sent. | `{ questionId: string; text: string }` |
 | `conversation:answer:waiting` | Waiting for answer. | `{ questionId: string }` |
-| `conversation:server:message` | Server-side message. | `{ questionId: string; message: string; type: string }` |
-| `conversation:asr:received` | ASR final result received. | `{ questionId: string; text: string }` |
-| `conversation:asr:chunk` | ASR text chunk received. | `{ questionId: string; text: string; isComplete: boolean }` |
-| `conversation:answer:chunk` | Answer text chunk received. | `{ questionId: string; chunk: string }` (End of stream is determined by the `completed` event). |
-| `conversation:answer:completed` | Single turn answer completed. | `{ questionId: string; fullAnswer: string }` |
+| `conversation:server:message` | Server-side message. | `{ questionId; rawText; representations; type }`; deprecated `message === rawText` |
+| `conversation:asr:received` | ASR final result received. | `{ questionId; rawText; representations }`; deprecated `text === rawText` |
+| `conversation:asr:chunk` | ASR text chunk received. | `{ questionId; rawText; representations; isComplete }`; deprecated `text === rawText` |
+| `conversation:answer:chunk` | Answer text chunk received. | `{ questionId; rawDelta; rawText; representations; isComplete }`; deprecated `chunk === rawDelta` |
+| `conversation:answer:completed` | Single turn answer completed. | `{ questionId; rawText; representations }`; deprecated `fullAnswer === rawText` |
+
+`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.2.0 without runtime warnings and can be removed only in a future major release.
 
 **Session**
 
@@ -489,7 +620,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 
 ---
 
-## 9. Full Usage Example
+## 10. Full Usage Example
 
 ```ts
 import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
@@ -516,10 +647,10 @@ async function main() {
 
   const answerByQuestion = new Map<string, string>();
 
-  client.events.on('conversation:answer:chunk', ({ questionId, chunk }) => {
+  client.events.on('conversation:answer:chunk', ({ questionId, rawDelta, rawText }) => {
     const prev = answerByQuestion.get(questionId) ?? '';
-    answerByQuestion.set(questionId, prev + chunk);
-    document.getElementById('answer')!.textContent = prev + chunk;
+    answerByQuestion.set(questionId, prev + rawDelta);
+    document.getElementById('answer')!.textContent = rawText;
   });
 
   client.events.on('conversation:answer:completed', ({ questionId }) => {
@@ -574,14 +705,14 @@ await client.reconnect();
 
 ---
 
-## 10. Video Chroma Key (Green Screen) Debugging Guide
+## 11. Video Chroma Key (Green Screen) Debugging Guide
 
 Before enabling Chroma Key, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection):
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
 
-### 10.1 Tuning Recommendations
+### 11.1 Tuning Recommendations
 
 1. **Background Color Selection (`chromaKey`)**
    - Recommended to pick colors from actual video screenshots.
@@ -604,7 +735,7 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
 
 ---
 
-## 11. FAQ
+## 12. FAQ
 
 **No video display or black screen**
 
@@ -627,11 +758,11 @@ Before enabling Chroma Key, ensure the following settings are applied (or leave 
 
 ---
 
-## 12. Error Codes
+## 13. Error Codes
 
 The following are the string values for the `ErrorCode` enum (`src/errors/ErrorCodes.ts`), consistent with the `code` field in `sdk:error` and thrown `SDKError` objects.
 
-### 12.1 HTTP & Control Plane
+### 13.1 HTTP & Control Plane
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -641,7 +772,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `SDK_INTERRUPT_CONVERSATION_FAILED` | Failed to send interruption command. |
 | `HTTP_CONTROLLER_NOT_AVAILABLE` | HTTP controller is not ready. Avoid calling HTTP-dependent operations. |
 
-### 12.2 SDK Lifecycle
+### 13.2 SDK Lifecycle
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -652,9 +783,10 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `SDK_RECONNECT_FAILED` | Manual reconnection failed. |
 | `SDK_NOT_CONNECTED` | API called without an active connection. Call `connect()` or check `isConnected`. |
 | `SDK_INVALID_STATE_TRANSITION` | Illegal state transition (e.g., calling `updateConnectionConfig` in Auth mode). |
+| `SDK_PLUGIN_CONTEXT_INACTIVE` | A retained registrar/CoreService proxy was used after unload or SDK disposal; stop using that handle. |
 | `SDK_ERROR` | Generic fallback error code. |
 
-### 12.3 LiveKit / RTC
+### 13.3 LiveKit / RTC
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -664,7 +796,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR` | Failed to parse data message. Check protocol version compatibility. |
 | `LIVEKIT_UNPUBLISH_MICROPHONE_FAILED` | Failed to unpublish the microphone track. |
 
-### 12.4 Audio
+### 13.4 Audio
 
 | Code | Description & Recommendation |
 | :--- | :--- |
@@ -674,20 +806,20 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
 | `AUDIO_OUTPUT_DISABLED` | Thrown by `getAudioElement()` when `output.enabled === false`. |
 
-### 12.5 Camera
+### 13.5 Camera
 
 | Code | Description |
 | :--- | :--- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | Camera controller is unavailable. |
 
-### 12.6 Session & State Machine
+### 13.6 Session & State Machine
 
 | Code | Description & Recommendation |
 | :--- | :--- |
 | `CONVERSATION_CONTROLLER_NOT_AVAILABLE` | Conversation controller is unavailable. |
 | `STATE_MACHINE_INVALID_STATE_TRANSITION` | Internal state machine received illegal transition. Provide logs for feedback. |
 
-### 12.7 Utilities & Others
+### 13.7 Utilities & Others
 
 | Code | Description |
 | :--- | :--- |
@@ -698,9 +830,9 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 
 ---
 
-## 13. Performance Monitoring & Troubleshooting
+## 14. Performance Monitoring & Troubleshooting
 
-### 13.1 Built-in Metrics
+### 14.1 Built-in Metrics
 
 Enabled by default (`performanceMonitor.enabled !== false`). The metric names under `PerformanceMetricName` include:
 
@@ -713,7 +845,7 @@ Enabled by default (`performanceMonitor.enabled !== false`). The metric names un
 
 Data structure: `PerformanceMetricRecord` (contains `metric`, `durationMs`, `startedAt`, `endedAt`, and optional `questionId`).
 
-### 13.2 Custom Reporting
+### 14.2 Custom Reporting
 
 ```ts
 import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
@@ -736,7 +868,7 @@ client.setPerformanceMetricReporter((metric) => {
 });
 ```
 
-### 13.3 Troubleshooting Recommendations
+### 14.3 Troubleshooting Recommendations
 
 - **Slow First Frame**: Check region latency, TURN server status, and whether repeated `connect()` retries are occurring.
 - **Slow Text Response**: Correlate with backend LLM/business processing time and check for main-thread blocking.
@@ -744,4 +876,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 1.3.0._
+_Document version consistent with package version: 2.2.0._

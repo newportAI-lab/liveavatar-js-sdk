@@ -6,8 +6,10 @@ This SDK provides an integrated communication solution combining **LiveKit (RTC)
 
 For detailed integration guides and API references, please refer to the:
 
-* [SDK User Manual (English)](./SDK_User_Manual.md)
-* [SDK 用户手册 (中文)](./SDK_使用手册.md)
+- [SDK User Manual (English)](./SDK_User_Manual.md)
+- [SDK 用户手册 (中文)](./SDK_使用手册.md)
+- [Plugin Integration Guide (English)](./SDK_Plugin_Integration_Guide.md)
+- [插件接入文档 (中文)](./SDK_插件接入文档.md)
 
 ## Performance Monitoring
 

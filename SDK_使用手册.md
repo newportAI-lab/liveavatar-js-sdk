@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v1.3.0）
+# Facemarket 实时数字人 SDK 使用手册（v2.2.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **1.3.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.2.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -246,7 +246,10 @@ await client.connect();
 | `http`               | `{ baseURL?, headers? }`    | 否   | Auth 与 HTTP 控制接口根路径及默认头                                                     |
 | `performanceMonitor` | `PerformanceMonitorOptions` | 否   | 默认开启；`enabled: false` 可关闭                                                       |
 | `sandbox`            | `boolean`                   | 否   | 沙箱开关（依业务后端约定）                                                              |
-| `debug`              | `boolean`                   | 否   | 调试日志                                                                                |
+| `debug`              | `boolean \| DebugOptions`  | 否   | 可选 Debug、LiveKit verbose 与 A/V 诊断配置；详见第 7 章「Debug 与 A/V 诊断」。          |
+| `plugins`            | `readonly SDKPlugin[]`      | 否   | 构造期安装的插件列表。传入已从插件包导入的 `SDKPlugin`；单个安装失败不影响客户端构造。详见[插件接入文档](./SDK_插件接入文档.md)。 |
+
+本章仅列出构造参数。Debug 日志、A/V 诊断、自动视频停滞告警和实验性 frame metadata worker 的完整配置及行为说明见第 7 章。
 
 ### 6.2 `connectConfig`
 
@@ -305,11 +308,113 @@ await client.connect();
 
 ---
 
-## 7. 核心 API 方法
+## 7. Debug 与 A/V 诊断
+
+### 7.1 基础 Debug 与 LiveKit verbose
+
+`debug: true`、`debug: {}` 仅开启 SDK Debug 日志；只有 `debug: { verbose: true }` 才会开启 LiveKit JS SDK 的内部 Debug 日志。SDK Logger 与 LiveKit Logger 都是同一页面的 runtime 全局设置：每次创建客户端都会应用当前配置；`debug` 为 `false` 或省略时 SDK Logger 恢复为 `ERROR`，非 `verbose: true` 时 LiveKit Logger 恢复为 `info`，客户端 `dispose()` 也会恢复这两个默认级别。因此最后创建或释放的 SDK 客户端会影响同页其他 SDK 或 LiveKit 客户端的日志级别。
+
+### 7.2 周期 A/V 诊断（`debug.avSync`）
+
+通过以下配置在 LiveKit Room 连接成功后按周期采样远端音频/视频接收端统计；默认不轮询：
+
+```ts
+debug: {
+  avSync: { enabled: true, intervalMs: 2000, historyLimit: 60 },
+}
+```
+
+后台采样最多等待 10 秒以接收通过 renderer 参与者过滤的首个远端音频或视频轨道；超时后停止当前连接会话的后台采样，并在上传日志中记录 `remote-track-wait-timeout`。该超时不影响手动 `captureRemoteAvSyncDiagnostics()`。
+
+离线证据经 `getAvSyncRawTelemetry(query?)` 按页返回，不再输出 `[RTC remote-media]` Console 行；无参只返回最近 5 分钟、最多 200 条，使用 `range`、`pageSize` 和 `page.nextCursor` 读取更多记录。日志查询和事实摘要在 Dedicated Worker 执行，主动 capture 仍在浏览器主线程读取当前 WebRTC stats。`avSyncLogRetention` 返回保留量、存储错误和丢弃量；Room 断开会冻结最后会话供分页查询，重连替换它，`dispose()` 和连接建立失败会清除它。
+
+### 7.3 自动视频停滞告警
+
+启用 `debug.avSync` 后，无需轮询 `getAvSyncAnalysis()` 即可收到自动视频流水线异常。共享 `<video>` 已触发 `playing` 后，SDK 会在连续 3 个兼容周期样本确认后，将接收、解码和浏览器呈现停滞分别归类为 `video_receive`、`video_decode` 和 `video_render`。`video_render` 仅在浏览器支持 `requestVideoFrameCallback`、已有呈现基线且页面可见时检测；SDK 不会自动重连、重订阅或重启播放。
+
+自动告警是一个连续的问题生命周期：首次确认时发送 `phase: "raised"`；同一已确认分类持续时保持活跃，但刻意不重复派发事件或 `video-pipeline-stalled` 日志；同一视频轨道确认变为另一 receive/decode/render 分类时发送 `phase: "updated"`；只有受影响的接收、解码或呈现层出现直接正向进展时才发送 `phase: "recovered"`。因此，没有新的告警事件或留存日志**不表示已经恢复**。
+
+每个生命周期 payload 都带有不透明 `alertId`。同一活跃问题的 `raised`、`updated` 和最终 `recovered` 保持相同 ID。`updated` 提供 `previousFinding`，并可能改变 `finding`；业务应保留该问题直至收到 `recovered`，不可用“未出现新告警”作为正常信号：
+
+```ts
+const activeAlerts = new Map<string, AvSyncAlertEvent>();
+
+client.events.on(`sdk:avSyncAlert`, (alert) => {
+  if (alert.phase === "recovered") {
+    activeAlerts.delete(alert.alertId);
+    return;
+  }
+
+  // raised 与 updated 都表示问题仍处于活跃状态。
+  activeAlerts.set(alert.alertId, alert);
+});
+```
+
+所有告警阶段发送给稳定公开 `sdk:avSyncAlert`，并可由已安装插件接收；插件接入方式见[插件接入文档](./SDK_插件接入文档.md)。只有首次 `raised` 会写入留存的 `video-pipeline-stalled` 事实证据。SDK 不会自动上传告警或日志。只监听公开事件、不轮询 `getAvSyncAnalysis()`，即可覆盖上述自动周期观测 transition；但 `getAvSyncAnalysis()` 仍负责轨道绑定、传输退化、音频 concealment、播放和相对漂移等完整保留窗口的手动分析。此类 finding 只有业务实际调用分析 API 后才可能变为告警。
+
+### 7.4 实验性 Frame Metadata Worker
+
+周期 A/V 统计和 TimeSync 默认不会启用实验性的 frame metadata worker。如需启用，必须同时开启周期诊断并设置 `frameMetadata: true`：
+
+```ts
+debug: {
+  avSync: { enabled: true, frameMetadata: true },
+}
+```
+
+开启它的作用是为**远端视频帧**补充可关联的 frame metadata：SDK 会请求 LiveKit frame metadata worker，并在上游已声明相应 packet-trailer feature、轨道支持 metadata lookup 且存在可关联的 TimeSync RTP timestamp 时，把 `frameId`、`userTimestamp` 和 `userData` 与接收端基线、视频呈现事件关联。这样可以在 `getAvSyncRawTelemetry()` 中获得有界的 `frameMetadata` 样本，以及带 metadata 的 TimeSync/接收侧证据，便于排查“同一发布端视频帧从接收到实际呈现”的链路。
+
+如果 `userData` 是 ASCII 十进制的发布端 Unix 微秒级捕获时间戳，且 metadata 关联新鲜、没有重复帧，SDK 还会填充视频帧的 `videoCaptureToDisplayRawMs` 与相对变化值，用作 capture-to-display 诊断证据。`userData` 不符合该格式时会原样保留，相关时延字段保持 `null`；SDK 不会据此虚构时间戳或精确时延。
+
+该选项**不是**常规 WebRTC receiver stats、周期采样、TimeSync、基于 RTP 的相对漂移时间线，或 `video_receive` / `video_decode` / `video_render` 自动告警的前置条件；关闭后这些能力仍可工作，只是不再收集逐帧 metadata 和 capture-to-display 证据。metadata 仅适用于远端视频，并依赖浏览器/worker 能力、上游 feature 声明、轨道 lookup 和 TimeSync RTP 关联；任一条件缺失时，遥测会保留不可用或未观察到的事实，相关 metadata 字段为 `null` 或为空。
+
+`userData` 会以受限的 Base64 原样写入诊断遥测，启用前应确认其中不包含不应进入客户端诊断数据的业务信息。如 worker 初始化或运行失败，SDK 会以 `[RTC frame-metadata-worker]` 前缀在 Chrome DevTools Console 中提示，并将 worker 状态保留为诊断日志事实；普通 LiveKit 连接和基础 A/V 诊断仍会继续工作，诊断 API 不会因此抛出异常。
+
+### 7.5 插件引入与配置
+
+插件开发、扩展点和运行语义见[插件接入文档](./SDK_插件接入文档.md)。使用插件时，从其自身包导入 `SDKPlugin` 对象；将下面占位符替换为“当前已支持插件包”目录中实际插件提供的包名和导出名。
+
+```ts
+import { createClient } from '@sanseng/liveavatar-js-sdk';
+import { plugin } from '<plugin-package>';
+
+const options = {
+  connectConfig: {
+    type: 'direct',
+    config: { sfuUrl: 'wss://example.test', userToken: 'token' },
+  },
+} as const;
+
+// 二选一：构造期安装
+const configuredClient = createClient({ ...options, plugins: [plugin] });
+
+// 二选一：在未安装该 ID 的实例上运行期安装
+const runtimeClient = createClient(options);
+const result = runtimeClient.installPlugin(plugin);
+if (result.status === 'rejected') {
+  console.warn(result.pluginId, result.reason, result.message);
+}
+
+runtimeClient.uninstallPlugin(plugin.id);
+```
+
+同一插件 ID 不应同时出现在 `plugins` 与同一实例的 `installPlugin()` 中；运行期安装前请检查结果。`uninstallPlugin()` 返回 `true` 表示已卸载，`false` 表示当前实例中不存在该 ID。
+
+#### 当前已支持插件包
+
+| 插件包 | 用途 | 状态 |
+| --- | --- | --- |
+| 暂无 | v2.2.0 当前没有已发布或已登记的独立插件包。SDK 扩展点不是可直接安装的插件包。 | 暂无可用包 |
+
+有实际插件包发布后，本表会补充包名、安装命令和链接。
+
+---
+
+## 8. 核心 API 方法
 
 以下方法均定义于 `SDKClient`（`src/client/SDKClient.ts`）。除构造与 `setAuthToken` / `updateConnectionConfig` 外，多数媒体与会话 API 要求 **已成功 `connect()`**（内部通过 `sessionState.isConnected` 校验）。
 
-### 7.1 连接与生命周期
+### 8.1 连接与生命周期
 
 | 方法                                       | 说明                                                                                                      |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
@@ -317,18 +422,20 @@ await client.connect();
 | `connect(): Promise<void>`                 | 建立协调器、各域控制器与 LiveKit；内部可在无有效缓存时等价调用预连接路径。                                |
 | `disconnect(): Promise<void>`              | 停止采集、断开 LiveKit、结束 HTTP 会话相关清理；实例可再次 `connect()` / `reconnect()`。                  |
 | `reconnect(): Promise<ConnectionSnapshot>` | 手动重连：先 `disconnect()`，再按模式刷新配置后 `connect()`。若当前状态不允许重连，返回当前快照并打日志。 |
+| `installPlugin(plugin): SDKPluginInstallResult` | 原子安装 Plugin API v1 插件；拒绝以结果数据返回，不影响 SDK 生命周期。 |
+| `uninstallPlugin(pluginId: string): boolean` | 原子卸载全部 contribution、失效旧 handle 并调用插件 dispose。 |
 | `dispose(): void`                          | 释放全部资源；之后不得再使用该实例。                                                                      |
 
 **约束**：浏览器策略下，**带声音的播放**与 **麦克风采集** 建议在用户手势（点击等）回调内触发 `connect()` / `startAudioCapture()`。
 
-### 7.2 鉴权与连接配置
+### 8.2 鉴权与连接配置
 
 | 方法                                                           | 说明                                                                                                                                                                          |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                     |
 | `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
 
-### 7.3 媒体
+### 8.3 媒体
 
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
@@ -356,14 +463,14 @@ await client.connect();
 | `stopLocalAnalyserEmission(): void`                     | 停止本地麦克风分析器。             |
 | `restartLocalAnalyserEmission(): void`                  | 重启本地麦克风分析器链路。         |
 
-### 7.4 会话
+### 8.4 会话
 
 | 方法                                              | 说明                                                                                  |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `sendTextQuestion(text: string): Promise<string>` | 发送文本问题；返回 **消息 UID**（实现上用作问答关联，与事件中的 `questionId` 对应）。 |
 | `interrupt(): Promise<void>`                      | 发送打断控制事件（`control.interrupt`）。                                             |
 
-### 7.5 状态与可观测性
+### 8.5 状态与可观测性
 
 | 成员                                                                       | 说明                                                                                    |
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
@@ -371,9 +478,21 @@ await client.connect();
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
 | `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。   |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
+| `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>`      | 主动采集远端音视频接收统计和本次连接的轨道生命周期节点；未配置 `debug` 也可调用。        |
+| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>`           | 读取当前有界上下文和一页 `avSyncLogs`。默认最近 5 分钟、200 条；通过 `range`、`pageSize` 和 `page.nextCursor` 分页。窗口事实摘要默认启用，可用 `includeSummary: false` 关闭；日志查询和摘要在 Dedicated Worker 执行。 |
+| `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | 在 telemetry Worker 中异步分析完整保留窗口；调用方自行决定轮询周期。返回 `status`、`finding`、`features`、`layers` 和有界限制信息，不会因证据不足抛出异常；自动视频停滞通知不依赖调用此方法。 |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
 
-### 7.6 版本信息
+`getAvSyncAnalysis()` 的计数均是**请求分析窗口内的增量**，不会把浏览器 WebRTC 的累计 receiver counter 当作当前异常量。`features` 中的关键字段如下：
+
+- `audioObservationDurationMs`：有效远端音频 delta interval 的总观测时长。
+- `audioConcealedSamplesDelta` / `audioConcealmentEventsDelta`：该窗口内的音频 concealment 增量。
+- `audioConcealedSamplesPerSecond` / `audioConcealmentEventsPerSecond`：以上增量除以观测时长；没有有效音频 delta interval 时为 `null`。
+- `videoPacketsLostDelta`、`videoFramesReceivedDelta`、`videoFramesDroppedDelta`、`videoFramesDecodedDelta`：该窗口内的远端视频增量；其中 received/decoded 用于区分接收组帧与解码推进情况。
+
+多远端参与者时，全局音频速率的分母是所有有效远端 audio channel 的观测时长之和。`participants` 及告警 participant IDs 只包含本窗口内具有远端媒体证据的身份；本地或仅连接质量相关的参与者不会出现在分析结果中。
+
+### 8.6 版本信息
 
 | 成员                        | 说明                   |
 | --------------------------- | ---------------------- |
@@ -382,7 +501,7 @@ await client.connect();
 
 ---
 
-## 8. 公共事件介绍
+## 9. 公共事件介绍
 
 事件通过 `client.events.on(eventName, listener)` 订阅。事件名**仅**下列白名单，其余名称会抛错。
 
@@ -411,10 +530,20 @@ await client.connect();
 - **触发时机**：内部错误经映射为对外安全负载时。
 - **Payload**：`{ message: string; code: string }`（`code` 为 `ErrorCode` 字符串值）。
 
+### `sdk:pluginFault`
+
+- **触发时机**：插件 Observer/Transform/Provider/CoreService/dispose 发生隔离故障时。
+- **Payload**：仅包含 `pluginId`、可选 `contributionId` / `{ id, major, kind }` 扩展点描述、`phase`、`reason` 与 `occurredAtMs`。不会暴露 Error、stack、token、业务正文、原始协议 payload 或插件私有数据；该事件不会进入 Operational Log Observer。
+
 ### `sdk:connectionStateChanged`
 
 - **触发时机**：LiveKit 连接状态变更时（断开/连接中/已连接/重连中）。
 - **Payload**：`{ state: ConnectionState }`，其中 `ConnectionState` 为枚举值：`disconnected` | `connecting` | `connected` | `reconnecting` | `signalReconnecting`。
+
+### `sdk:avSyncAlert`
+
+- **触发时机**：这是单个 A/V 问题的生命周期：首次确认 attention 证据时发送 `raised`；同一活跃自动视频流水线确认进入另一 receive/decode/render 分类时发送 `updated`；仅受影响层出现直接正向进展时发送 `recovered`。相同故障持续会被刻意去重；没有新事件或日志不等于恢复。`debug.avSync` 下，播放中的视频若连续 3 个兼容周期 RTP 包、接收帧、解码帧均无进展，会自动报告 `video_receive`；确认的解码和呈现停滞还会报告 `video_decode` / `video_render`。仅 `insufficient_evidence` 不会触发告警。
+- **Payload**：有界 `AvSyncAlertEvent`，包含 `phase`、稳定不透明 `alertId`、`finding`、`previousFinding`、`status`、`confidence`、`sessionId`、`capturedAtMs`、参与者 ID、英文 message 和紧凑布尔特征。raised 的 `previousFinding` 为 null，updated/recovered 的该字段表示前一异常分类。参与者 ID 仅表示产生 finding 的远端媒体参与者，不会暴露原始日志、媒体对象、本地身份或 connection-only 身份。三个阶段只发送给公开事件与插件 handler；只有首次 raised 新增 retained stall log，SDK 不自动向外上传。
 
 ### `sdk:connectionQualityChanged`
 
@@ -479,11 +608,13 @@ await client.connect();
 | ------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `conversation:question:sent`    | 问题已发送   | `{ questionId: string; text: string }`                                                                           |
 | `conversation:answer:waiting`   | 等待回答     | `{ questionId: string }`                                                                                         |
-| `conversation:server:message`   | 服务端消息   | `{ questionId: string; message: string; type: string }`                                                          |
-| `conversation:asr:received`     | ASR 最终结果 | `{ questionId: string; text: string }`                                                                           |
-| `conversation:asr:chunk`        | ASR 文本分片 | `{ questionId: string; text: string; isComplete: boolean }`                                                      |
-| `conversation:answer:chunk`     | 回答文本分片 | `{ questionId: string; chunk: string }`（公开转发层仅保证 `questionId` 与 `chunk`；流式结束以 `completed` 为准） |
-| `conversation:answer:completed` | 单次回答结束 | `{ questionId: string; fullAnswer: string }`                                                                     |
+| `conversation:server:message`   | 服务端消息   | `{ questionId; rawText; representations; type }`；deprecated `message === rawText` |
+| `conversation:asr:received`     | ASR 最终结果 | `{ questionId; rawText; representations }`；deprecated `text === rawText` |
+| `conversation:asr:chunk`        | ASR 文本分片 | `{ questionId; rawText; representations; isComplete }`；deprecated `text === rawText` |
+| `conversation:answer:chunk`     | 回答文本分片 | `{ questionId; rawDelta; rawText; representations; isComplete }`；deprecated `chunk === rawDelta` |
+| `conversation:answer:completed` | 单次回答结束 | `{ questionId; rawText; representations }`；deprecated `fullAnswer === rawText` |
+
+`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.2.0 继续返回且不输出 warning，只能在未来 major 删除。
 
 **会话控制**
 
@@ -493,7 +624,7 @@ await client.connect();
 
 ---
 
-## 9. 完整使用示例
+## 10. 完整使用示例
 
 ```ts
 import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
@@ -520,10 +651,10 @@ async function main() {
 
   const answerByQuestion = new Map<string, string>();
 
-  client.events.on('conversation:answer:chunk', ({ questionId, chunk }) => {
+  client.events.on('conversation:answer:chunk', ({ questionId, rawDelta, rawText }) => {
     const prev = answerByQuestion.get(questionId) ?? '';
-    answerByQuestion.set(questionId, prev + chunk);
-    document.getElementById('answer')!.textContent = prev + chunk;
+    answerByQuestion.set(questionId, prev + rawDelta);
+    document.getElementById('answer')!.textContent = rawText;
   });
 
   client.events.on('conversation:answer:completed', ({ questionId }) => {
@@ -578,14 +709,14 @@ await client.reconnect();
 
 ---
 
-## 10. 视频绿幕参数调试指南
+## 11. 视频绿幕参数调试指南
 
 在启用绿幕前，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
 
-### 10.1 参数调试建议
+### 11.1 参数调试建议
 
 1. **背景取色（`chromaKey`）**
    - 建议从真实视频截图中取色
@@ -608,7 +739,7 @@ await client.reconnect();
 
 ---
 
-## 11. 常见问题
+## 12. 常见问题
 
 **视频无画面或黑屏**
 
@@ -635,11 +766,11 @@ await client.reconnect();
 
 ---
 
-## 12. 错误代码
+## 13. 错误代码
 
 以下为 `ErrorCode` 枚举（`src/errors/ErrorCodes.ts`）的字符串值，与 `sdk:error` 及抛出 `SDKError` 的 `code` 一致。
 
-### 12.1 HTTP 与控制面
+### 13.1 HTTP 与控制面
 
 | 代码                                | 说明与处理建议                                                          |
 | ----------------------------------- | ----------------------------------------------------------------------- |
@@ -649,7 +780,7 @@ await client.reconnect();
 | `SDK_INTERRUPT_CONVERSATION_FAILED` | 打断指令发送失败。                                                      |
 | `HTTP_CONTROLLER_NOT_AVAILABLE`     | HTTP 控制器未就绪；避免在错误生命周期调用依赖 HTTP 的操作。             |
 
-### 12.2 SDK 生命周期
+### 13.2 SDK 生命周期
 
 | 代码                           | 说明与处理建议                                                        |
 | ------------------------------ | --------------------------------------------------------------------- |
@@ -660,9 +791,10 @@ await client.reconnect();
 | `SDK_RECONNECT_FAILED`         | 手动重连失败。                                                        |
 | `SDK_NOT_CONNECTED`            | 未连接时调用了需要连接态的 API；先 `connect()` 或检查 `isConnected`。 |
 | `SDK_INVALID_STATE_TRANSITION` | 非法状态迁移（如 Auth 模式调用 `updateConnectionConfig`）。           |
+| `SDK_PLUGIN_CONTEXT_INACTIVE` | 插件卸载或 SDK dispose 后继续使用旧 registrar/CoreService proxy；停止使用该 handle。 |
 | `SDK_ERROR`                    | 通用回退错误码。                                                      |
 
-### 12.3 LiveKit / RTC
+### 13.3 LiveKit / RTC
 
 | 代码                                        | 说明与处理建议                           |
 | ------------------------------------------- | ---------------------------------------- |
@@ -672,7 +804,7 @@ await client.reconnect();
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR`          | 数据消息解析失败；核对协议版本。         |
 | `LIVEKIT_UNPUBLISH_MICROPHONE_FAILED`       | 取消麦克风发布失败。                     |
 
-### 12.4 音频
+### 13.4 音频
 
 | 代码                                                                          | 说明与处理建议                                                       |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -682,20 +814,20 @@ await client.reconnect();
 | `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                                               |
 | `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
 
-### 12.5 摄像头
+### 13.5 摄像头
 
 | 代码                              | 说明与处理建议       |
 | --------------------------------- | -------------------- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | 摄像头控制器不可用。 |
 
-### 12.6 会话与状态机
+### 13.6 会话与状态机
 
 | 代码                                     | 说明与处理建议                         |
 | ---------------------------------------- | -------------------------------------- |
 | `CONVERSATION_CONTROLLER_NOT_AVAILABLE`  | 会话控制器不可用。                     |
 | `STATE_MACHINE_INVALID_STATE_TRANSITION` | 内部状态机收到非法迁移；收集日志反馈。 |
 
-### 12.7 工具与其它
+### 13.7 工具与其它
 
 | 代码                     | 说明与处理建议                        |
 | ------------------------ | ------------------------------------- |
@@ -706,9 +838,9 @@ await client.reconnect();
 
 ---
 
-## 13. 性能监控与排查
+## 14. 性能监控与排查
 
-### 13.1 内置指标
+### 14.1 内置指标
 
 默认开启（`performanceMonitor.enabled !== false`）。指标名 `PerformanceMetricName`：
 
@@ -721,7 +853,7 @@ await client.reconnect();
 
 记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`）。
 
-### 13.2 自定义上报
+### 14.2 自定义上报
 
 ```ts
 import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
@@ -744,7 +876,7 @@ client.setPerformanceMetricReporter((metric) => {
 });
 ```
 
-### 13.3 排查建议
+### 14.3 排查建议
 
 - **首帧慢**：检查地域、TURN、是否重复失败重试 `connect()`。
 - **文本响应慢**：结合后端 LLM/业务耗时与主线程阻塞。
@@ -752,4 +884,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：1.3.0。_
+_文档版本与包版本一致：2.2.0。_
