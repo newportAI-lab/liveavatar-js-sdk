@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v2.2.0)
+# Facemarket Live Avatar SDK User Manual (v2.3.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.2.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.3.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -19,7 +19,7 @@ Integrators can complete the setup via constructor parameters, connection APIs, 
 
 ## 2. Upgrading from v1 to v2
 
-For an upgrade from **v1.3.2** to the current **v2.2.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
+For an upgrade from **v1.3.2 or v1.3.3** to the current **v2.3.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
 
 ---
 
@@ -398,7 +398,7 @@ Do not include the same plugin ID in both `plugins` and `installPlugin()` on the
 
 | Plugin package | Purpose | Status |
 | --- | --- | --- |
-| None | No standalone plugin package is published or registered for v2.2.0. SDK extension points are not directly installable plugin packages. | No available package |
+| None | No standalone plugin package is published or registered for v2.3.0. SDK extension points are not directly installable plugin packages. | No available package |
 
 This table will list package names, installation commands, and links once actual plugin packages are released.
 
@@ -434,7 +434,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | Method | Description |
 | :--- | :--- |
 | `setRenderFitMode(mode: RenderFitMode): void` | Updates the video object-fit mode. |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates chroma-key, threshold, edge smoothing, despill, and `isBackgroundKeying` options in the connected session. Updating `isBackgroundKeying` does not switch processed/raw. **Do not pass `enabled` to switch processed/raw at runtime**: that path has a known playback-stall issue and may be removed in a future major version. |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates green-screen options only in a connected session. `enabled: true` / `false` immediately switches between the processed Canvas and raw video paths; all other options also take effect immediately. Runtime patches apply only to the active connection; `reconnect()` restores constructor options or the Auth configuration resolved for that connection. |
 | `startAudioCapture(): Promise<void>` | Opens the microphone and publishes to LiveKit. |
 | `stopAudioCapture(): Promise<void>` | Stops microphone publishing. |
 | `setVolume(volume: number): void` | Sets playback volume (`0` to `1`). |
@@ -609,7 +609,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `conversation:answer:chunk` | Answer text chunk received. | `{ questionId; rawDelta; rawText; representations; isComplete }`; deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | Single turn answer completed. | `{ questionId; rawText; representations }`; deprecated `fullAnswer === rawText` |
 
-`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.2.0 without runtime warnings and can be removed only in a future major release.
+`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.3.0 without runtime warnings and can be removed only in a future major release.
 
 **Session**
 
@@ -706,11 +706,11 @@ await client.reconnect();
 
 ## 11. Video Chroma Key (Green Screen) Debugging Guide
 
-When enabling Chroma Key through initial configuration, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection). Choose the rendering mode when constructing the SDK or through Auth connection configuration; do not change it in a connected session:
+When enabling Chroma Key through initial configuration, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection). The render mode can be selected when constructing the SDK or through Auth connection configuration; after connection, `updateGreenScreenOptions({ enabled })` can switch between the raw and processed paths:
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
-- `greenScreen.isBackgroundKeying = true` (optional: key only after confirming all four edges are screen)
+- `greenScreen.isBackgroundKeying = true` (optional: key only when at least three frame edges are screen)
 
 ### 11.1 Tuning Recommendations
 
@@ -736,17 +736,16 @@ When enabling Chroma Key through initial configuration, ensure the following set
 
 5. **Background Gate (`isBackgroundKeying`)**
    - Default: `false`. When set to `true`, the SDK downsizes each frame to a `32 × 18` sample and checks the top, right, bottom, and left edges independently with the current `chromaKey` and effective `similarity`.
-   - Existing chroma key and despill run only when every edge has at least `75%` key-color samples. If any edge fails or the browser cannot read the sample frame, the SDK renders that frame unchanged instead of applying blind keying.
+   - Existing chroma key and despill run only when at least three of the four edges each have at least `75%` key-color samples. If fewer than three edges qualify or the browser cannot read the sample frame, the SDK renders that frame unchanged instead of applying blind keying.
    - This protects a central green object in a scene whose edges are not a screen. When a real green screen surrounds the frame, green clothing or props remain indistinguishable from the background to a color-only algorithm; that case requires person/foreground segmentation.
 
 ### 11.2 Runtime Adjustment
 
-After the client connects, options can be patched without rebuilding the SDK or processor. Ordinary tuning reuses the current CPU/WebGL backend.
-
-> **Important warning (BUG-012):** Do not call `updateGreenScreenOptions({ enabled: true })` or `updateGreenScreenOptions({ enabled: false })` to switch between `raw` and `processed` at runtime. Switching from raw to processed can stall shared remote A/V playback. Set `video.renderMode` and `video.greenScreen.enabled` when creating the SDK, or have Auth provide them before connection. Runtime `enabled` support in `updateGreenScreenOptions` may be removed in a future major version.
+After the client connects, options can be patched without rebuilding the SDK or processor. Ordinary tuning reuses the current CPU/WebGL backend. Passing `enabled: true` immediately switches to the processed Canvas path; passing `enabled: false` immediately restores the raw video path. All other green-screen options also take effect immediately.
 
 ```ts
 client.updateGreenScreenOptions({
+  enabled: true,
   similarity: 0.34,
   smoothness: 0.18,
   despillStrength: 1.25,
@@ -754,7 +753,7 @@ client.updateGreenScreenOptions({
 });
 ```
 
-This method is available only while `client.isConnected === true`. Its patch applies only to the active connection; after `reconnect()`, green-screen settings are restored from the constructor options or Auth configuration resolved for that connection. Only options other than `enabled` are supported at runtime; updating `isBackgroundKeying` does not switch the raw/processed render mode.
+This method is available only while `client.isConnected === true`. Its patch applies only to the active connection; after `reconnect()`, green-screen settings are restored from the constructor options or Auth configuration resolved for that connection.
 
 ---
 
@@ -900,4 +899,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 2.2.0._
+_Document version consistent with package version: 2.3.0._

@@ -1,17 +1,19 @@
 # Facemarket Live Avatar SDK v1 → v2 Upgrade Guide
 
-> **Supported path**: upgrade `@sanseng/liveavatar-js-sdk` from **v1.3.2** to **v2.2.0**.
+> **Verified upgrade path**: upgrade `@sanseng/liveavatar-js-sdk` from **v1.3.2 or v1.3.3** to **v2.3.0**.
+>
+> **Earlier v1 versions**: a direct upgrade is not declared verified. Upgrade to the v1.3.2 or v1.3.3 baseline first, then follow this guide.
 >
 > **Audience**: Web application integrators, backend owners of LiveKit/DataChannel traffic, and teams that use conversation events, microphone levels, or A/V diagnostics.
 
-This guide identifies the validation and recommended application changes for the upgrade. v2.2.0 retains the principal v1.3.2 connection configuration and compatible conversation-event aliases. Do not change a backend solely because of the historical, short-lived participant-filter rule from v2.0.0.
+This guide identifies the validation and recommended application changes for the upgrade. v2.3.0 retains the principal connection configuration and compatible conversation-event aliases of the late-v1.3.2–v1.3.3 baseline. Do not change a backend solely because of the historical, short-lived participant-filter rule from v2.0.0.
 
 ## 1. Upgrade summary
 
 | Area | Code change required? | Migration result |
 | --- | --- | --- |
 | Direct / Auth connection configuration | No | The mode-specific contracts of `connectConfig`, `setAuthToken()`, and `updateConnectionConfig()` are unchanged. Regression-test the existing mode. |
-| DataChannel sender identity | No, but integration verification is required | v2.2.0 accepts DataChannel messages from both `renderer_*` and `coordinator_*` identities. This upgrade does not require a backend prefix change. |
+| DataChannel sender identity | No, but integration verification is required | v2.3.0 accepts DataChannel messages from both `renderer_*` and `coordinator_*` identities. This upgrade does not require a backend prefix change. |
 | Conversation event text fields | Recommended | Legacy fields continue to work, but new code should use `rawDelta` / `rawText` and `representations`. |
 | Disconnect and error handling | Yes, if the application branches on error codes | Passive disconnect handling belongs to `sdk:disconnected`; established-session runtime faults use `LIVEKIT_DISCONNECTED`. |
 | Microphone-level thresholds | Yes, if the application consumes the value | The level is now local PCM linear RMS, not a LiveKit private field or a synthetic fallback. |
@@ -19,11 +21,11 @@ This guide identifies the validation and recommended application changes for the
 
 ## 2. Prepare the upgrade
 
-1. Archive the production dependency, lockfile, and v1.3.2 integration-test result so the release can roll back by restoring the original lockfile and package version.
+1. Archive the production dependency, lockfile, and v1.3.2 or v1.3.3 integration-test result so the release can roll back by restoring the original lockfile and package version.
 2. Upgrade the package and reinstall dependencies:
 
    ```bash
-   npm install @sanseng/liveavatar-js-sdk@2.2.0
+   npm install @sanseng/liveavatar-js-sdk@2.3.0
    ```
 
 3. Run the validation matrix in section 7 using production-equivalent browsers, Direct/Auth configuration, LiveKit rooms, and backend participant identities.
@@ -44,13 +46,13 @@ The current SDK accepts `RoomEvent.DataReceived` traffic from both of these remo
 - `renderer_*`
 - `coordinator_*`
 
-An existing v1.3.2 backend may therefore keep its `coordinator_*` conversation/protocol sender. During integration testing, verify that the identity used in production reaches question/answer, ASR, and server-message events. Messages from all other identities continue to be ignored by the SDK.
+An existing v1.3.2–v1.3.3 backend may therefore keep its `coordinator_*` conversation/protocol sender. During integration testing, verify that the identity used in production reaches question/answer, ASR, and server-message events. Messages from all other identities continue to be ignored by the SDK.
 
 ## 4. Application-code migration
 
 ### 4.1 Move conversation handlers to canonical text fields
 
-v2 retains the legacy fields for v1.3.2 compatibility, but TypeScript marks them as deprecated. Move new code to canonical fields now so a future major removal of aliases does not require another migration.
+v2 retains the legacy fields for v1.3.2–v1.3.3 compatibility, but TypeScript marks them as deprecated. Move new code to canonical fields now so a future major removal of aliases does not require another migration.
 
 | Event | Compatible v1 field | Recommended v2 fields |
 | --- | --- | --- |
@@ -73,13 +75,13 @@ client.events.on('conversation:answer:chunk', ({ rawDelta, rawText, representati
 });
 ```
 
-In v2.2.0, `chunk === rawDelta`, `fullAnswer === rawText`, `message === rawText`, and ASR `text === rawText`. `representations` is a JSON-safe projection array ordered by plugin registration; it may be empty when no text-transform plugin is installed.
+In v2.3.0, `chunk === rawDelta`, `fullAnswer === rawText`, `message === rawText`, and ASR `text === rawText`. `representations` is a JSON-safe projection array ordered by plugin registration; it may be empty when no text-transform plugin is installed.
 
 ### 4.2 Update disconnect and error handling
 
 `sdk:disconnected` remains the lifecycle notification for a passive disconnect, and its `reason` supports troubleshooting. Do not use `sdk:error` as the only disconnect trigger.
 
-In v2.2.0:
+In v2.3.0:
 
 - `LIVEKIT_CONNECT_FAILED` remains for Room connection and existing operation-failure paths.
 - When a successfully connected Room ends because of an unrecoverable runtime fault (transport, media, protocol, Agent, or SIP trunk), the SDK additionally emits `sdk:error` with `LIVEKIT_DISCONNECTED`.
@@ -135,13 +137,15 @@ Plugin API v1 is the first public plugin contract in v2; there is no published v
 
 ### 5.3 Runtime green-screen updates
 
-`updateGreenScreenOptions()` can update chroma key, thresholds, smoothing, despill, and `isBackgroundKeying` after connection. Do not pass `enabled` to switch between `raw` and `processed` at runtime: switching from raw to processed can stall shared remote A/V playback. Set `video.renderMode` and `video.greenScreen.enabled` when the instance is created, or have Auth provide them before connecting.
+Call `updateGreenScreenOptions()` only while connected. Passing `enabled: true` / `false` immediately switches between the processed Canvas and raw video paths; chroma key, thresholds, smoothing, despill, and `isBackgroundKeying` options also take effect immediately. Every runtime patch applies only to the active connection; `reconnect()` restores constructor options or the Auth configuration resolved for that connection.
+
+v2.3.0 adds `isBackgroundKeying` (default `false`): when enabled, the SDK checks key-color coverage on the four edges of a `32 × 18` sample frame and keys only when at least three edges each reach `75%`. `chromaKey` accepts only high-chroma green (hue `80°..160°`) or blue (hue `200°..260°`); invalid tuples fall back to `[0, 255, 0]`. The remaining defaults are `similarity: 0.4`, `smoothness: 0.25`, and `despillStrength: 1.15`.
 
 ## 6. Pre-release validation checklist
 
 | Scenario | Passing condition |
 | --- | --- |
-| Installation and type check | The application installs, builds, and starts with v2.2.0 and no longer references internal modules or private fields. |
+| Installation and type check | The application installs, builds, and starts with v2.3.0 and no longer references internal modules or private fields. |
 | Direct connection | Existing URL/token connects, disconnects, and reconnects; a refreshed token reaches the target Room. |
 | Auth connection | `setAuthToken()`, initial connection, and backend configuration refresh through `reconnect()` succeed. |
 | DataChannel | The production `coordinator_*` or `renderer_*` sender reaches conversation, ASR, and server-message events. |
@@ -150,11 +154,11 @@ Plugin API v1 is the first public plugin contract in v2; there is no published v
 | Microphone | Capture starts in a user gesture; `null`, initial `0`, and measured RMS thresholds match business expectations. |
 | Disconnect handling | Ordinary session endings reach `sdk:disconnected`; serious runtime faults can be identified as `LIVEKIT_DISCONNECTED`. |
 | Optional A/V Sync | When enabled, paged results are awaited and alert state is cleared by `alertId` only on `recovered`. |
-| Green screen | Rendering mode is selected before creation/connection; runtime changes exclude `enabled`. |
+| Green screen | After connection, verify that `enabled` immediately switches between raw and processed, other parameters take effect immediately, and a reconnect resets runtime patches. |
 
 ## 7. Rollback strategy
 
-Keep the v1.3.2 lockfile or explicit package version during the rollout. If connection, protocol, or media regression fails the checklist, stop expanding v2.2.0 traffic and restore the v1.3.2 dependency and matching build artifact. Do not work around the issue by calling private SDK APIs or forcing changes on internal media elements. Collect `sdk:disconnected.reason`, `sdk:error.code`, browser version, and backend participant identity before targeted investigation.
+Keep the v1.3.2 or v1.3.3 lockfile or explicit package version during the rollout. If connection, protocol, or media regression fails the checklist, stop expanding v2.3.0 traffic and restore the verified v1 baseline dependency and matching build artifact. Do not work around the issue by calling private SDK APIs or forcing changes on internal media elements. Collect `sdk:disconnected.reason`, `sdk:error.code`, browser version, and backend participant identity before targeted investigation.
 
 ## 8. Related documentation
 

@@ -1,17 +1,19 @@
 # Facemarket 实时数字人 SDK v1 → v2 升级指南
 
-> **适用版本**：从 `@sanseng/liveavatar-js-sdk` **v1.3.2** 升级到 **v2.2.0**。
+> **已验证的升级路径**：从 `@sanseng/liveavatar-js-sdk` **v1.3.2 或 v1.3.3** 升级到 **v2.3.0**。
+>
+> **更早 v1 版本**：尚未声明已直接验证。请先升级到 v1.3.2 或 v1.3.3 基线，再按本指南升级。
 >
 > **读者**：Web 应用集成方、负责 LiveKit/数据通道的后端维护者，以及使用对话事件、麦克风音量或 A/V 诊断能力的业务方。
 
-本指南说明升级所需的验证与建议改造。当前 v2.2.0 保留 v1.3.2 的主要连接配置和对话事件兼容字段；请不要依据历史 v2.0.0 的短期参与者过滤规则单独改造后端。
+本指南说明升级所需的验证与建议改造。当前 v2.3.0 保留 v1.3.2–v1.3.3 末期基线的主要连接配置和对话事件兼容字段；请不要依据历史 v2.0.0 的短期参与者过滤规则单独改造后端。
 
 ## 1. 升级结论
 
 | 范围 | 是否必须改代码 | 迁移结论 |
 | --- | --- | --- |
 | Direct / Auth 连接配置 | 否 | `connectConfig`、`setAuthToken()`、`updateConnectionConfig()` 的模式约束保持不变。按原有模式完成连通性回归。 |
-| DataChannel 发送者身份 | 否，但必须联调验证 | v2.2.0 同时接收 `renderer_*` 与 `coordinator_*` 身份发送的数据通道消息；无需为本次升级强制切换后端前缀。 |
+| DataChannel 发送者身份 | 否，但必须联调验证 | v2.3.0 同时接收 `renderer_*` 与 `coordinator_*` 身份发送的数据通道消息；无需为本次升级强制切换后端前缀。 |
 | 对话事件文本字段 | 建议 | 旧字段仍可用，但新代码应改用 `rawDelta` / `rawText` 与 `representations`。 |
 | 断连和错误处理 | 是，如业务按错误码分支 | 被动断连应以 `sdk:disconnected` 为准；已建立会话的严重运行期故障使用 `LIVEKIT_DISCONNECTED`。 |
 | 麦克风音量阈值 | 是，如业务使用该数值 | 音量现在是本地 PCM 的线性 RMS，不再是 LiveKit 私有字段或固定兜底值。 |
@@ -19,11 +21,11 @@
 
 ## 2. 升级前准备
 
-1. 将当前生产依赖、锁文件和 v1.3.2 集成回归结果归档，确保可通过恢复原锁文件和依赖版本回退。
+1. 将当前生产依赖、锁文件和 v1.3.2 或 v1.3.3 集成回归结果归档，确保可通过恢复原锁文件和依赖版本回退。
 2. 升级包并重新安装依赖：
 
    ```bash
-   npm install @sanseng/liveavatar-js-sdk@2.2.0
+   npm install @sanseng/liveavatar-js-sdk@2.3.0
    ```
 
 3. 使用与生产一致的浏览器、Direct/Auth 配置、LiveKit 房间和后端参与者身份执行本指南第 7 节的验证矩阵。
@@ -44,13 +46,13 @@ Direct 模式继续由调用方提供 `sfuUrl` 和 `userToken`；令牌需要更
 - `renderer_*`
 - `coordinator_*`
 
-因此，v1.3.2 后端可保持现有 `coordinator_*` 文本/协议消息发送方式。联调时分别验证生产实际使用的身份能够触发问答、ASR 和服务端消息事件；来自其他身份的消息仍会被 SDK 忽略。
+因此，v1.3.2–v1.3.3 后端可保持现有 `coordinator_*` 文本/协议消息发送方式。联调时分别验证生产实际使用的身份能够触发问答、ASR 和服务端消息事件；来自其他身份的消息仍会被 SDK 忽略。
 
 ## 4. 应用代码迁移
 
 ### 4.1 将对话事件改为规范文本字段
 
-v2 保留旧字段以兼容 v1.3.2，但它们已标记为 TypeScript 弃用字段。新代码应使用规范字段，避免在未来 major 版本删除别名时再次改造。
+v2 保留旧字段以兼容 v1.3.2–v1.3.3，但它们已标记为 TypeScript 弃用字段。新代码应使用规范字段，避免在未来 major 版本删除别名时再次改造。
 
 | 事件 | v1 兼容字段 | v2 推荐字段 |
 | --- | --- | --- |
@@ -73,13 +75,13 @@ client.events.on('conversation:answer:chunk', ({ rawDelta, rawText, representati
 });
 ```
 
-在 v2.2.0 中，`chunk === rawDelta`、`fullAnswer === rawText`、`message === rawText`，ASR 的 `text === rawText`。`representations` 为按插件注册顺序排列的 JSON-safe 投影；未安装文本转换插件时它可以为空数组。
+在 v2.3.0 中，`chunk === rawDelta`、`fullAnswer === rawText`、`message === rawText`，ASR 的 `text === rawText`。`representations` 为按插件注册顺序排列的 JSON-safe 投影；未安装文本转换插件时它可以为空数组。
 
 ### 4.2 调整断连与错误处理
 
 `sdk:disconnected` 始终是被动断连的生命周期通知，payload 的 `reason` 用于排障；不要把 `sdk:error` 当作所有断连的唯一触发条件。
 
-v2.2.0 中：
+v2.3.0 中：
 
 - `LIVEKIT_CONNECT_FAILED` 继续用于 Room 建连或既有操作失败路径。
 - 已成功连接的 Room 因不可恢复运行期故障（传输、媒体、协议、Agent 或 SIP trunk）终止时，会额外发送 `sdk:error`，错误码为 `LIVEKIT_DISCONNECTED`。
@@ -133,15 +135,17 @@ const older = telemetry.page.nextCursor
 
 Plugin API v1 是 v2 首次公开的插件契约，不存在需要从已发布插件 API 转换的 v1 格式。只有需要扩展日志、对话文本或 A/V Sync 时，才通过 `ClientOptions.plugins` 或 `installPlugin()` 接入 `SDKPlugin`；完整约束见[插件接入文档](./SDK_插件接入文档.md)。
 
-### 5.3 绿幕运行期更新限制
+### 5.3 绿幕运行期更新
 
-可以在连接后用 `updateGreenScreenOptions()` 调整取色、阈值、边缘平滑、despill 和 `isBackgroundKeying`。不要在运行期传入 `enabled` 来切换 `raw` / `processed`：从 raw 切到 processed 可能使共享远端音视频播放停滞。请在创建实例时设置 `video.renderMode` 与 `video.greenScreen.enabled`，或由 Auth 后端在连接前下发。
+仅在连接期间调用 `updateGreenScreenOptions()`。传入 `enabled: true` / `false` 会立即在 processed Canvas 与 raw video 路径间切换，取色、阈值、边缘平滑、despill 和 `isBackgroundKeying` 等其他参数也会即时生效。所有运行期补丁只作用于当前连接；`reconnect()` 后会恢复构造参数或本次 Auth 配置。
+
+v2.3.0 新增 `isBackgroundKeying`（默认 `false`）：启用后，SDK 对 `32 × 18` 采样帧的四条边分别检查 key 色覆盖率，至少三条边各有 `75%` 命中才执行抠图。`chromaKey` 只接受高色度绿色（色相 `80°..160°`）或蓝色（色相 `200°..260°`）；无效元组回退到 `[0, 255, 0]`。其余默认值为 `similarity: 0.4`、`smoothness: 0.25`、`despillStrength: 1.15`。
 
 ## 6. 上线前验证清单
 
 | 场景 | 通过条件 |
 | --- | --- |
-| 安装与类型检查 | 应用以 v2.2.0 依赖成功安装、构建和启动，无内部模块或私有字段引用。 |
+| 安装与类型检查 | 应用以 v2.3.0 依赖成功安装、构建和启动，无内部模块或私有字段引用。 |
 | Direct 连接 | 使用现有 URL/token 成功连接、断开和重连；刷新 token 后连接到目标房间。 |
 | Auth 连接 | `setAuthToken()`、首次连接和 `reconnect()` 的服务端配置刷新成功。 |
 | DataChannel | 生产实际的 `coordinator_*` 或 `renderer_*` 发送者能够收到问答、ASR 和服务端消息。 |
@@ -150,11 +154,11 @@ Plugin API v1 是 v2 首次公开的插件契约，不存在需要从已发布�
 | 麦克风 | 用户手势内启动采集；`null`、首帧 `0` 与实际 RMS 阈值行为符合业务预期。 |
 | 断连处理 | 普通会话结束进入 `sdk:disconnected`；严重运行期断连能识别 `LIVEKIT_DISCONNECTED`。 |
 | 可选 A/V Sync | 已启用时可 await 分页结果，告警状态仅在 `recovered` 时按 `alertId` 清除。 |
-| 绿幕 | 模式在创建/连接前确定；运行期只调整非 `enabled` 参数。 |
+| 绿幕 | 连接后可验证 `enabled` 在 raw / processed 间即时切换，其他参数即时生效；重连后运行期改动重置。 |
 
 ## 7. 回退策略
 
-在灰度阶段保留 v1.3.2 的锁文件或显式依赖版本。若上述连接、协议或媒体回归未通过，停止扩大 v2.2.0 流量，恢复 v1.3.2 依赖和对应构建产物；不要通过调用 SDK 私有 API 或强行修改内部媒体元素绕过问题。收集 `sdk:disconnected.reason`、`sdk:error.code`、浏览器版本和后端参与者身份后，再完成定向排查。
+在灰度阶段保留 v1.3.2 或 v1.3.3 的锁文件或显式依赖版本。若上述连接、协议或媒体回归未通过，停止扩大 v2.3.0 流量，恢复已验证的 v1 基线依赖和对应构建产物；不要通过调用 SDK 私有 API 或强行修改内部媒体元素绕过问题。收集 `sdk:disconnected.reason`、`sdk:error.code`、浏览器版本和后端参与者身份后，再完成定向排查。
 
 ## 8. 相关文档
 

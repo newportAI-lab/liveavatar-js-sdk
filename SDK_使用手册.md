@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v2.2.0）
+# Facemarket 实时数字人 SDK 使用手册（v2.3.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.2.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.3.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -19,7 +19,7 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ## 2. 从 v1 升级到 v2
 
-从 **v1.3.2** 升级至当前 **v2.2.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
+从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.3.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
 
 ---
 
@@ -402,7 +402,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 
 | 插件包 | 用途 | 状态 |
 | --- | --- | --- |
-| 暂无 | v2.2.0 当前没有已发布或已登记的独立插件包。SDK 扩展点不是可直接安装的插件包。 | 暂无可用包 |
+| 暂无 | v2.3.0 当前没有已发布或已登记的独立插件包。SDK 扩展点不是可直接安装的插件包。 | 暂无可用包 |
 
 有实际插件包发布后，本表会补充包名、安装命令和链接。
 
@@ -438,7 +438,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
 | `setRenderFitMode(mode: RenderFitMode): void`            | 设置画面适配模式。                 |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 在已连接会话中实时更新取色、阈值、边缘平滑、despill 与 `isBackgroundKeying` 参数。更新 `isBackgroundKeying` 不会切换 processed/raw；**不要在运行期传入 `enabled` 切换 processed/raw**，该分支有已知播放停滞问题，未来 major 版本可能移除。 |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 仅在已连接会话中实时更新绿幕参数。`enabled: true` / `false` 会立即在 processed Canvas 与 raw video 路径间切换；其他参数也即时生效。运行期改动仅作用于当前连接，`reconnect()` 后恢复构造参数或本次 Auth 配置。 |
 | `startAudioCapture(): Promise<void>`                     | 打开麦克风并通过 LiveKit 发布。    |
 | `stopAudioCapture(): Promise<void>`                      | 停止麦克风发布。                   |
 | `setVolume(volume: number): void`                        | 播放音量 `0..1`。                  |
@@ -613,7 +613,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId; rawDelta; rawText; representations; isComplete }`；deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId; rawText; representations }`；deprecated `fullAnswer === rawText` |
 
-`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.2.0 继续返回且不输出 warning，只能在未来 major 删除。
+`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.3.0 继续返回且不输出 warning，只能在未来 major 删除。
 
 **会话控制**
 
@@ -710,11 +710,11 @@ await client.reconnect();
 
 ## 11. 视频绿幕参数调试指南
 
-通过初始化配置启用绿幕时，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。渲染模式应在创建 SDK 或 Auth 服务端连接配置中确定，不要在已连接会话中切换。
+通过初始化配置启用绿幕时，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。渲染模式可以在创建 SDK 或 Auth 服务端连接配置中确定；连接成功后也可以用 `updateGreenScreenOptions({ enabled })` 在 raw 与 processed 路径间切换。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
-- `greenScreen.isBackgroundKeying = true`（可选：仅在确认四边均为幕布时执行抠图）
+- `greenScreen.isBackgroundKeying = true`（可选：至少三条画面边缘为幕布时才执行抠图）
 
 ### 11.1 参数调试建议
 
@@ -740,17 +740,16 @@ await client.reconnect();
 
 5. **背景门控（`isBackgroundKeying`）**
    - 默认值：`false`。设为 `true` 后，SDK 会将每帧缩小到 `32 × 18` 采样，并使用当前 `chromaKey` 与有效 `similarity` 分别检查顶、右、底、左四条边。
-   - 每条边至少 `75%` 的采样像素命中 key 色，才执行现有抠图与去色溢；任一边不满足或浏览器无法读取采样帧时，SDK 原样显示该帧，不会盲目抠图。
+   - 四条边中至少三条的采样像素各有 `75%` 命中 key 色，才执行现有抠图与去色溢；不足三条或浏览器无法读取采样帧时，SDK 原样显示该帧，不会盲目抠图。
    - 它适用于“画面中央有绿色物品、但四周并非绿幕”的场景。若真实绿幕覆盖画面四周，绿色衣物或道具与背景仍无法由纯颜色算法区分；该场景需要人像/前景分割模型。
 
 ### 11.2 实时调整
 
-连接成功后可以直接增量调整参数，无需重建 SDK 或处理器；普通调参会复用当前 CPU/WebGL 后端。
-
-> **重要告警（BUG-012）**：不要调用 `updateGreenScreenOptions({ enabled: true })` 或 `updateGreenScreenOptions({ enabled: false })` 在运行期切换 `raw` / `processed`。从 raw 切至 processed 可能使共享远端音视频播放停滞。请在创建 SDK 时设置 `video.renderMode` 与 `video.greenScreen.enabled`，或由 Auth 服务端在连接前下发。未来 major 版本可能移除 `updateGreenScreenOptions` 对 `enabled` 的运行期支持。
+连接成功后可以直接增量调整参数，无需重建 SDK 或处理器；普通调参会复用当前 CPU/WebGL 后端。传入 `enabled: true` 会立即切换至 processed Canvas 路径，传入 `enabled: false` 会立即切换回 raw video 路径；其他绿幕参数也会即时生效。
 
 ```ts
 client.updateGreenScreenOptions({
+  enabled: true,
   similarity: 0.34,
   smoothness: 0.18,
   despillStrength: 1.25,
@@ -758,7 +757,7 @@ client.updateGreenScreenOptions({
 });
 ```
 
-此方法仅可在 `client.isConnected === true` 时调用，且修改仅作用于当前连接会话；`reconnect()` 后会恢复该次连接从构造参数或 Auth 服务端配置解析出的绿幕配置。运行期只支持调整非 `enabled` 参数；更新 `isBackgroundKeying` 不会切换 raw / processed 渲染模式。
+此方法仅可在 `client.isConnected === true` 时调用，且修改仅作用于当前连接会话；`reconnect()` 后会恢复该次连接从构造参数或 Auth 服务端配置解析出的绿幕配置。
 
 ---
 
@@ -908,4 +907,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：2.2.0。_
+_文档版本与包版本一致：2.3.0。_
