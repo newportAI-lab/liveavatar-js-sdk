@@ -17,11 +17,9 @@ Integrators can complete the setup via constructor parameters, connection APIs, 
 
 ---
 
-## 2. Breaking Change Notice (v1.3.0)
+## 2. Upgrading from v1 to v2
 
-**This version is incompatible with v1.2.1.**
-
-v1.3.0 adapts to changes in the backend interface, and the logic for receiving text messages has changed. Please ensure the backend has been updated before upgrading. Re-test all text message-related functionality after upgrading.
+For an upgrade from **v1.3.2** to the current **v2.2.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
 
 ---
 
@@ -272,7 +270,7 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | :--- | :--- |
 | `containerElement` | The container where the video is mounted (**Ensure it exists and is inserted into the DOM**). |
 | `renderMode` | `'raw'` \| `'processed'` |
-| `greenScreen` | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength? }` |
+| `greenScreen` | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`; `isBackgroundKeying` defaults to `false`. |
 | `camera` | `{ publishToLiveKit?: boolean }` | No | Default `false`. When `true`, `startCamera()` publishes the track to the LiveKit room. Can be overridden per-call via `startCamera({ publishToLiveKit: true })`. |
 | `fitMode` | `'contain' \| 'cover' \| 'fill' \| 'none'` |
 | `debug` | Inherited from `BaseOptions`. |
@@ -436,6 +434,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | Method | Description |
 | :--- | :--- |
 | `setRenderFitMode(mode: RenderFitMode): void` | Updates the video object-fit mode. |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates chroma-key, threshold, edge smoothing, despill, and `isBackgroundKeying` options in the connected session. Updating `isBackgroundKeying` does not switch processed/raw. **Do not pass `enabled` to switch processed/raw at runtime**: that path has a known playback-stall issue and may be removed in a future major version. |
 | `startAudioCapture(): Promise<void>` | Opens the microphone and publishes to LiveKit. |
 | `stopAudioCapture(): Promise<void>` | Stops microphone publishing. |
 | `setVolume(volume: number): void` | Sets playback volume (`0` to `1`). |
@@ -443,7 +442,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `mute()` / `unmute()` | Controls playback muting. |
 | `get isMuted` | Returns whether playback is muted. |
 | `get isAudioCapturing` | Returns whether the microphone is actively publishing. |
-| `getMicrophoneAudioLevel(): number \| null` | Gets the microphone audio level (0.0-1.0). |
+| `getMicrophoneAudioLevel(): number \| null` | Gets the latest 4096-sample local PCM frame's linear RMS level (0.0-1.0); returns `0` before the first frame and `null` without an active microphone. |
 | `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | Gets microphone transmission statistics. |
 | `isMicrophoneSilent(): Promise<boolean \| null>` | Detects if the microphone is sending silence. |
 | `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | Opens the camera; optionally publishes to LiveKit room. Defaults to local preview only. |
@@ -707,31 +706,55 @@ await client.reconnect();
 
 ## 11. Video Chroma Key (Green Screen) Debugging Guide
 
-Before enabling Chroma Key, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection):
+When enabling Chroma Key through initial configuration, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection). Choose the rendering mode when constructing the SDK or through Auth connection configuration; do not change it in a connected session:
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
+- `greenScreen.isBackgroundKeying = true` (optional: key only after confirming all four edges are screen)
 
 ### 11.1 Tuning Recommendations
 
 1. **Background Color Selection (`chromaKey`)**
-   - Recommended to pick colors from actual video screenshots.
-   - Avoid using generic pure green (#00FF00).
-   - Only green hues are supported.
-   - Default: `[0, 255, 0]` (pure green).
+   - High-chroma green (hue `80°..160°`) and blue (hue `200°..260°`) are supported. Prefer green screens; choose blue when the subject's clothing or props contain substantial green.
+   - Each RGB component must be a finite value in `0..255`; saturation must be `≥ 55%`, value `≥ 30%`, and the YCbCr chroma radius `≥ 0.35`.
+   - Red, cyan, purple, gray/white/black, low-saturation, dark, and out-of-range complete tuples fall back to `[0, 255, 0]` instead of being used for keying.
+   - Pick a representative well-lit screen color from a real video screenshot. This version accepts one key only; it does not yet automatically sample spatial screen variations caused by shadows or reflections.
 
 2. **Similarity (`similarity`)**
    - Default: `0.4`
    - Start from `0.3` and adjust incrementally.
    - Values too high may erroneously remove person details (e.g., hair or clothing).
+   - The SDK may reduce its effective value together with `smoothness` to keep neutral foreground pixels outside the transparent feather.
 
-3. **Green Spill Suppression (`despillStrength`)**
+3. **Edge Color Spill Suppression (`despillStrength`)**
    - Default: `1.15`
-   - Used to reduce green reflections/fringes on the subject's edges.
+   - Removes green reflections for green keys and blue reflections for blue keys.
 
 4. **Edge Smoothness (`smoothness`)**
    - Default: `0.25`
    - Improves blending for hair and semi-transparent areas.
+
+5. **Background Gate (`isBackgroundKeying`)**
+   - Default: `false`. When set to `true`, the SDK downsizes each frame to a `32 × 18` sample and checks the top, right, bottom, and left edges independently with the current `chromaKey` and effective `similarity`.
+   - Existing chroma key and despill run only when every edge has at least `75%` key-color samples. If any edge fails or the browser cannot read the sample frame, the SDK renders that frame unchanged instead of applying blind keying.
+   - This protects a central green object in a scene whose edges are not a screen. When a real green screen surrounds the frame, green clothing or props remain indistinguishable from the background to a color-only algorithm; that case requires person/foreground segmentation.
+
+### 11.2 Runtime Adjustment
+
+After the client connects, options can be patched without rebuilding the SDK or processor. Ordinary tuning reuses the current CPU/WebGL backend.
+
+> **Important warning (BUG-012):** Do not call `updateGreenScreenOptions({ enabled: true })` or `updateGreenScreenOptions({ enabled: false })` to switch between `raw` and `processed` at runtime. Switching from raw to processed can stall shared remote A/V playback. Set `video.renderMode` and `video.greenScreen.enabled` when creating the SDK, or have Auth provide them before connection. Runtime `enabled` support in `updateGreenScreenOptions` may be removed in a future major version.
+
+```ts
+client.updateGreenScreenOptions({
+  similarity: 0.34,
+  smoothness: 0.18,
+  despillStrength: 1.25,
+  isBackgroundKeying: true,
+});
+```
+
+This method is available only while `client.isConnected === true`. Its patch applies only to the active connection; after `reconnect()`, green-screen settings are restored from the constructor options or Auth configuration resolved for that connection. Only options other than `enabled` are supported at runtime; updating `isBackgroundKeying` does not switch the raw/processed render mode.
 
 ---
 
@@ -791,6 +814,7 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | Code | Description & Recommendation |
 | :--- | :--- |
 | `LIVEKIT_CONNECT_FAILED` | Room connection failed. Verify URL/token/TURN network status. |
+| `LIVEKIT_DISCONNECTED` | An established Room ended because of an unrecoverable runtime transport, media, protocol, agent, or SIP-trunk fault. Inspect the paired `sdk:disconnected` reason. |
 | `LIVEKIT_SEND_VIDEO_AVAILABLE_STATE_FAILED` | Failed to report video available state. |
 | `LIVEKIT_SEND_TEXT_DATA_FAILED` | Failed to send text data via LiveKit Data Channel. |
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR` | Failed to parse data message. Check protocol version compatibility. |

@@ -17,11 +17,9 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ---
 
-## 2. 破坏性升级说明（v1.3.0）
+## 2. 从 v1 升级到 v2
 
-**本版本与 v1.2.1 不兼容。**
-
-v1.3.0 对后端接口进行了适配，文本消息获取逻辑发生变化。升级前请确认后端已同步更新。升级后请重新测试相关文本消息功能。
+从 **v1.3.2** 升级至当前 **v2.2.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
 
 ---
 
@@ -31,7 +29,7 @@ SDK 通过 `ClientOptions.connectConfig` 区分两种互斥模式：**Direct（�
 
 ### 2.1 Direct Mode（直连模式）
 
-**描述**  
+**描述**
 由调用方在构造参数中直接提供 LiveKit 所需的 `sfuUrl` 与 `userToken`。SDK 不通过 HTTP 拉取房间配置。
 
 **前置条件**
@@ -69,14 +67,14 @@ const client = createClient({
 - 不支持在 Auth 模式下调用 `updateConnectionConfig`（将抛出 `SDK_INVALID_STATE_TRANSITION`）。
 - 不支持在 Direct 模式下依赖 HTTP 接口返回的 `videoOptions` 覆盖策略；绿幕等视频参数以构造时的 `video` 与运行时 `setRenderFitMode` 等为准（除非业务自行在服务端约定后写入本地配置）。
 
-**适用场景**  
+**适用场景**
 已有稳定签发 LiveKit token 的后端、私有化部署、或调试阶段快速接入。
 
 ---
 
 ### 2.2 Auth Mode（鉴权模式）
 
-**描述**  
+**描述**
 调用方提供 `avatarId`（及可选的 `authToken`、`avatarVoice`）。SDK 通过 `HttpController` 拉取鉴权与房间配置（`ConnectionConfig`），并可将服务端返回的绿幕等 `videoOptions` 合并进上下文。
 
 **前置条件**
@@ -124,7 +122,7 @@ client.setAuthToken('jwt-or-business-token');
 - 不支持在 Auth 模式下使用 `updateConnectionConfig` 手动替换 LiveKit URL/Token（应通过服务端刷新会话与 `reconnect()` 重新拉取）。
 - `connectConfig.config.authToken` 与 `setAuthToken` 为同一语义数据源；须保证在首次 `connect()` 前至少一侧有效。
 
-**适用场景**  
+**适用场景**
 生产环境由业务后端统一鉴权、统一下发房间参数与绿幕等视频策略。
 
 ---
@@ -276,7 +274,7 @@ await client.connect();
 | ------------------ | --------------------------------------------------------------------- |
 | `containerElement` | 视频渲染挂载的容器（**业务侧应保证存在且已插入 DOM**）                |
 | `renderMode`       | `'raw'` \| `'processed'`                                              |
-| `greenScreen`      | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength? }` |
+| `greenScreen`      | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`；`isBackgroundKeying` 默认 `false` |
 | `fitMode`          | `'contain' \| 'cover' \| 'fill' \| 'none'`                            |
 | `camera`           | `{ publishToLiveKit?: boolean }`                                      | 默认 `false`；为 `true` 时 `startCamera()` 将轨道发布到 LiveKit 房间。 |
 | `debug`            | 继承 `BaseOptions`                                                    |
@@ -440,6 +438,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
 | `setRenderFitMode(mode: RenderFitMode): void`            | 设置画面适配模式。                 |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 在已连接会话中实时更新取色、阈值、边缘平滑、despill 与 `isBackgroundKeying` 参数。更新 `isBackgroundKeying` 不会切换 processed/raw；**不要在运行期传入 `enabled` 切换 processed/raw**，该分支有已知播放停滞问题，未来 major 版本可能移除。 |
 | `startAudioCapture(): Promise<void>`                     | 打开麦克风并通过 LiveKit 发布。    |
 | `stopAudioCapture(): Promise<void>`                      | 停止麦克风发布。                   |
 | `setVolume(volume: number): void`                        | 播放音量 `0..1`。                  |
@@ -447,7 +446,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 | `mute()` / `unmute()`                                    | 播放静音控制。                     |
 | `get isMuted`                                            | 是否静音。                         |
 | `get isAudioCapturing`                                   | 麦克风是否处于活跃发布状态。       |
-| `getMicrophoneAudioLevel(): number \| null`              | 获取麦克风音频级别 (0.0-1.0)。     |
+| `getMicrophoneAudioLevel(): number \| null`              | 获取最近一个 4096-sample 本地 PCM 帧的线性 RMS (0.0-1.0)；首帧前为 `0`，无活动麦克风时为 `null`。 |
 | `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。           |
 | `isMicrophoneSilent(): Promise<boolean \| null>`         | 检测麦克风是否在发送静音。         |
 | `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | 开启摄像头；可选择发布到 LiveKit 房间（默认仅本地预览）。 |
@@ -711,31 +710,55 @@ await client.reconnect();
 
 ## 11. 视频绿幕参数调试指南
 
-在启用绿幕前，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。
+通过初始化配置启用绿幕时，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。渲染模式应在创建 SDK 或 Auth 服务端连接配置中确定，不要在已连接会话中切换。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
+- `greenScreen.isBackgroundKeying = true`（可选：仅在确认四边均为幕布时执行抠图）
 
 ### 11.1 参数调试建议
 
 1. **背景取色（`chromaKey`）**
-   - 建议从真实视频截图中取色
-   - 避免直接使用纯绿色
-   - 仅支持绿色调
-   - 默认值：`[0, 255, 0]`（纯绿色）
+   - 支持高色度绿色（色相 `80°..160°`）与高色度蓝色（色相 `200°..260°`）；优先使用绿幕，人物服装或道具含大量绿色时可选择蓝幕。
+   - RGB 三个分量均须为有限值 `0..255`，并满足饱和度 `≥ 55%`、明度 `≥ 30%`、YCbCr 色度半径 `≥ 0.35`。
+   - 红、青、紫、灰白黑、低饱和、过暗或越界的完整元组都会回退默认值 `[0, 255, 0]`，不会继续用于抠图。
+   - 建议从真实视频截图中选择幕布具有代表性的亮区颜色。当前版本只支持一个代表性 key，不包含幕布阴影、反光等空间不均匀颜色的自动采样。
 
 2. **相似度（`similarity`）**
    - 默认值：`0.4`
    - 推荐从 `0.3` 开始逐步调整
    - 数值过大可能误抠除人物细节
+   - SDK 会与 `smoothness` 一起根据 key 的色度预算收紧有效值，避免中性前景进入透明羽化区。
 
-3. **绿色溢出抑制（`despillStrength`）**
+3. **边缘颜色溢出抑制（`despillStrength`）**
    - 默认值：`1.15`
-   - 用于减少人物边缘绿色反光
+   - 绿色 key 去除绿色反光；蓝色 key 去除蓝色反光。
 
 4. **边缘平滑（`smoothness`）**
    - 默认值：`0.25`
    - 可改善头发、半透明区域的融合效果
+
+5. **背景门控（`isBackgroundKeying`）**
+   - 默认值：`false`。设为 `true` 后，SDK 会将每帧缩小到 `32 × 18` 采样，并使用当前 `chromaKey` 与有效 `similarity` 分别检查顶、右、底、左四条边。
+   - 每条边至少 `75%` 的采样像素命中 key 色，才执行现有抠图与去色溢；任一边不满足或浏览器无法读取采样帧时，SDK 原样显示该帧，不会盲目抠图。
+   - 它适用于“画面中央有绿色物品、但四周并非绿幕”的场景。若真实绿幕覆盖画面四周，绿色衣物或道具与背景仍无法由纯颜色算法区分；该场景需要人像/前景分割模型。
+
+### 11.2 实时调整
+
+连接成功后可以直接增量调整参数，无需重建 SDK 或处理器；普通调参会复用当前 CPU/WebGL 后端。
+
+> **重要告警（BUG-012）**：不要调用 `updateGreenScreenOptions({ enabled: true })` 或 `updateGreenScreenOptions({ enabled: false })` 在运行期切换 `raw` / `processed`。从 raw 切至 processed 可能使共享远端音视频播放停滞。请在创建 SDK 时设置 `video.renderMode` 与 `video.greenScreen.enabled`，或由 Auth 服务端在连接前下发。未来 major 版本可能移除 `updateGreenScreenOptions` 对 `enabled` 的运行期支持。
+
+```ts
+client.updateGreenScreenOptions({
+  similarity: 0.34,
+  smoothness: 0.18,
+  despillStrength: 1.25,
+  isBackgroundKeying: true,
+});
+```
+
+此方法仅可在 `client.isConnected === true` 时调用，且修改仅作用于当前连接会话；`reconnect()` 后会恢复该次连接从构造参数或 Auth 服务端配置解析出的绿幕配置。运行期只支持调整非 `enabled` 参数；更新 `isBackgroundKeying` 不会切换 raw / processed 渲染模式。
 
 ---
 
@@ -799,6 +822,7 @@ await client.reconnect();
 | 代码                                        | 说明与处理建议                           |
 | ------------------------------------------- | ---------------------------------------- |
 | `LIVEKIT_CONNECT_FAILED`                    | 房间连接失败；校验 URL/token/TURN 网络。 |
+| `LIVEKIT_DISCONNECTED`                      | 已建立的房间因不可恢复的传输、媒体、协议、Agent 或 SIP trunk 运行期故障终止；结合 `sdk:disconnected` 的 reason 排查。 |
 | `LIVEKIT_SEND_VIDEO_AVAILABLE_STATE_FAILED` | 上报视频可用状态失败。                   |
 | `LIVEKIT_SEND_TEXT_DATA_FAILED`             | 文本数据经 LiveKit 发送失败。            |
 | `LIVEKIT_DATA_MESSAGE_PARSE_ERROR`          | 数据消息解析失败；核对协议版本。         |
