@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v2.3.0)
+# Facemarket Live Avatar SDK User Manual (v2.5.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.3.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.5.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -19,7 +19,7 @@ Integrators can complete the setup via constructor parameters, connection APIs, 
 
 ## 2. Upgrading from v1 to v2
 
-For an upgrade from **v1.3.2 or v1.3.3** to the current **v2.3.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
+For an upgrade from **v1.3.2 or v1.3.3** to the current **v2.5.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
 
 ---
 
@@ -221,7 +221,23 @@ await client.connect();
 
 - `video.renderMode === 'raw'`: Remote tracks are rendered directly onto the `<video>` element (default behavior depends on options).
 - `video.renderMode === 'processed'`: Renders via a Canvas processing pipeline (e.g., for green screen/chroma key).
-- **In Auth Mode**, the green screen configuration returned by the server is mapped to `renderMode` / `greenScreen` (refer to `ConfigManager._fromAuthPayload`). If neither the local nor remote side provides an explicit configuration, the SDK's internal strategy will determine the mode.
+- **In Auth Mode**, server green-screen configuration may still be mapped to `renderMode` / `greenScreen` (refer to `ConfigManager._fromAuthPayload`). It never selects a transparent video layout: an omitted `videoLayout` preserves legacy behavior.
+
+### 5.4 Backend Video Layout and Transparent Output
+
+When the backend creates a session, pass its complete `videoLayout` response into `video.videoLayout` before creating the client. This is the only source of truth for the remote video format; the SDK does not inspect dimensions, green-screen flags, or pixels to guess it.
+
+```ts
+const client = createClient({
+  connectConfig: { type: 'direct', config: { sfuUrl: credentials.sfuUrl, userToken: credentials.userToken } },
+  video: { containerElement: document.getElementById('avatar')!, videoLayout: credentials.videoLayout },
+});
+```
+
+- `plain-v1` (`avatar-video`, H264, `alphaPlane: 'none'`) keeps the current raw or explicit client chroma-key path. Its encoded and content dimensions must match.
+- `rgb-alpha-vertical-v1` (`alphaPlane: 'bottom-luma'`) composites the top RGB half and bottom luma alpha half into a transparent WebGL Canvas. Its encoded height must be exactly twice its content height. It takes priority over `renderMode` and `greenScreen`; the packed source `<video>` is never shown.
+- The SDK validates this contract synchronously, snapshots and freezes it for the client lifetime, and exposes it as `client.videoLayout`. A backend layout change requires a new client; `updateConnectionConfig()` and reconnect do not change it.
+- Omitting `videoLayout` is supported only for legacy callers and preserves the old behavior. It never implies transparent video.
 
 ---
 
@@ -271,6 +287,7 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | `containerElement` | The container where the video is mounted (**Ensure it exists and is inserted into the DOM**). |
 | `renderMode` | `'raw'` \| `'processed'` |
 | `greenScreen` | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`; `isBackgroundKeying` defaults to `false`. |
+| `videoLayout` | Optional backend contract: `PlainVideoLayout` or `RGBAlphaVerticalVideoLayout`. Validate/pass it exactly as returned before `createClient()`; it is immutable after construction. |
 | `camera` | `{ publishToLiveKit?: boolean }` | No | Default `false`. When `true`, `startCamera()` publishes the track to the LiveKit room. Can be overridden per-call via `startCamera({ publishToLiveKit: true })`. |
 | `fitMode` | `'contain' \| 'cover' \| 'fill' \| 'none'` |
 | `debug` | Inherited from `BaseOptions`. |
@@ -398,9 +415,10 @@ Do not include the same plugin ID in both `plugins` and `installPlugin()` on the
 
 | Plugin package | Purpose | Status |
 | --- | --- | --- |
-| None | No standalone plugin package is published or registered for v2.3.0. SDK extension points are not directly installable plugin packages. | No available package |
+| `@sanseng/liveavatar-js-sdk-markdownrender` | Markdown rendering; see the plugin package documentation for exports, configuration and compatibility. | Listed plugin package |
+| `@sanseng/liveavatar-js-sdk-skywalking` | Published SkyWalking integration for A/V Sync diagnostics and SDK errors. Its published release does not consume the v2.4.0 first-frame Observer or log automatically. | Requires a separate compatible plugin release |
 
-This table will list package names, installation commands, and links once actual plugin packages are released.
+A later SkyWalking plugin release must register `SDK_PERFORMANCE_METRICS_V1` and/or `performance.first-frame` before it can report setPerformance or reportFrameErrors. The SDK does not own that plugin authorization, queue, retry, or delivery.
 
 ---
 
@@ -434,7 +452,8 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | Method | Description |
 | :--- | :--- |
 | `setRenderFitMode(mode: RenderFitMode): void` | Updates the video object-fit mode. |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates green-screen options only in a connected session. `enabled: true` / `false` immediately switches between the processed Canvas and raw video paths; all other options also take effect immediately. Runtime patches apply only to the active connection; `reconnect()` restores constructor options or the Auth configuration resolved for that connection. |
+| `videoLayout` | Read-only frozen copy of the backend layout selected at client construction, or `undefined` for legacy callers. |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates green-screen options only in a connected plain/legacy session. It cannot replace or reveal a `rgb-alpha-vertical-v1` packed presentation. |
 | `startAudioCapture(): Promise<void>` | Opens the microphone and publishes to LiveKit. |
 | `stopAudioCapture(): Promise<void>` | Stops microphone publishing. |
 | `setVolume(volume: number): void` | Sets playback volume (`0` to `1`). |
@@ -473,6 +492,7 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `get connectionSnapshot(): ConnectionSnapshot` | Synchronous read-only snapshot: `http.connected`, `rtc.connected`, `rtc.hasVideoTrack`, `overall.state`. |
 | `get sessionId(): string \| undefined` | Server-assigned session ID. **Auth mode only**; returns `undefined` in direct mode and logs a debug message. |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
+| `getPlaybackStatus(): Promise<PlaybackStatus>` | Current connection, media-receiving ICE/age-qualified RTT, per-track receiver metrics, completed output FPS and SDK-defined stalls. Supports single tracks; core metrics do not require debug. |
 | `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>` | Actively captures remote audio/video receiver statistics and this connection's track lifecycle nodes; available without debug configuration. |
 | `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>` | Reads current bounded context plus one `avSyncLogs` page. The default is the latest five minutes and 200 logs; use `range`, `pageSize`, and `page.nextCursor` to paginate. A fact-only window summary is enabled by default and can be disabled with `includeSummary: false`; log queries and aggregation run in a Dedicated Worker. |
 | `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | Asynchronously analyzes the complete retained window in the telemetry Worker. The caller controls polling cadence; the report exposes stable `status`, `finding`, `features`, `layers`, and bounded limitations, and ordinary evidence gaps do not reject the promise. Automatic video-stall notification does not depend on calling this method. |
@@ -487,7 +507,73 @@ All `getAvSyncAnalysis()` counters are **deltas within the requested analysis wi
 
 For multiple remote participants, the global audio-rate denominator is the sum of valid remote-audio channel observation durations. `participants` and alert participant IDs contain only identities with remote-media evidence in the requested window; local and connection-only identities are excluded.
 
-### 8.6 Version Information
+### 8.6 Playback Status and Diagnostics Selection
+
+Available in **2.5.0**. Use `getPlaybackStatus()` for a connection/playback panel; use the other APIs for diagnostic evidence and analysis.
+
+| API                                | Main use                                                                                              | Fresh stats capture | Debug requirements                                                                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `getPlaybackStatus()`              | Current connection, ICE/RTT, per-track loss/bitrate/resolution/FPS, SDK output FPS/stalls and quality | Yes                 | None for core metrics; `presentationFps` requires `debug.avSync`                                                 |
+| `captureRemoteAvSyncDiagnostics()` | One immediate paired A/V receiver snapshot, lifecycle and TimeSync context                            | Yes                 | Callable without debug; continuous TimeSync evidence needs A/V diagnostics                                       |
+| `getAvSyncRawTelemetry(query?)`    | Export retained evidence and retrieve a page of diagnostic logs                                       | No                  | Enable `debug.avSync` in advance for continuous receiver/frame evidence; frame metadata requires explicit opt-in |
+| `getAvSyncAnalysis(query?)`        | Analyze a retained time window for receive/decode/render/binding/playback issues                      | No                  | Needs sufficient retained evidence and the analysis Worker; otherwise reports `insufficient_evidence`            |
+
+The APIs share some receiver metrics but have separate roles. Playback sampling supports single audio/video tracks and keeps its interval baseline independent of A/V diagnostic sampling. Immediate diagnostic snapshots organize complete audio/video pairs. Raw telemetry and analysis cannot reconstruct facts that were never collected. Only `avSyncLogs` is paginated; other raw telemetry arrays are bounded context, not necessarily filtered to the same query window. Disconnect preserves frozen diagnostic evidence for querying; reconnect replaces the session, and dispose clears it.
+
+#### Current Playback Status
+
+```ts
+// Reuse an initialized client. Run this from a serialized polling loop, roughly once per second.
+const status = await client.getPlaybackStatus();
+console.log(status.connection.overall.state, status.quality, status.qualityReasons);
+console.log(status.ice.connectionType, status.ice.protocol, status.ice.relayProtocol);
+console.log(status.ice.rttMs, status.ice.rttAgeMs, status.ice.rttValidForMs);
+console.log(status.output?.outputFps, status.output?.stallCount);
+
+for (const track of status.tracks) {
+  console.log({
+    kind: track.kind,
+    lossPercent: track.packetLossRate === null ? null : track.packetLossRate * 100,
+    receiveKbps: track.bitrateBps === null ? null : track.bitrateBps / 1000,
+    width: track.width,
+    height: track.height,
+    decodedFps: track.decodedFps,
+  });
+}
+```
+
+- Interval loss and bitrate require two compatible samples; new/replaced receivers start a fresh baseline. `null`/`unknown` means unavailable, not zero or connection failure.
+- ICE stats follow the media-receiving PeerConnection: shared publisher in single-PC mode, subscriber in both dual-PC modes. TURN and UDP are not mutually exclusive; `relayProtocol` describes the local client-to-TURN hop.
+- RTT is client-to-SFU STUN RTT. The first sample establishes a response-counter baseline; an increase supplies an age-qualified RTT, which expires after 5 seconds. `rttMeasuredAtMs` is the SDK observation time, not exact STUN completion time. Polling does not refresh unchanged evidence.
+- `outputFps` measures distinct successful Canvas output/Worker acknowledgements (raw mode: supported video callbacks), not physical screen FPS. SDK stalls mean output gaps >=1 second after first output, excluding the first second of each gap, pauses and hidden-page periods. Browser freeze counters are separate.
+- `quality` is a fixed receiver/output heuristic, not a measured end-to-end quality score. It can be `disconnected`, `no-media`, `unknown`, `good` or `degraded`.
+- Only `presentationFps` needs `debug: { avSync: true }` or `debug: { avSync: { enabled: true } }`; `debug: true` alone is insufficient. ICE details, RTT, browser freezes and presentation FPS can remain unavailable even with debug. Accurate one-way/end-to-end latency, physical screen FPS and all perceived stalls are not provided.
+- Before connection/after teardown, tracks are empty; `output` can be null without a supported active renderer. Stop polling before disposing the client; calls after disposal reject. Connection duration is not collected.
+
+See [the full metric contract](docs/architecture/playback-status.md) for units, quality thresholds and availability details.
+
+#### Diagnosis and Historical Evidence
+
+```ts
+// Capture a current receiver snapshot; does not require debug.
+const snapshot = await client.captureRemoteAvSyncDiagnostics();
+
+// Analyze evidence already collected for the most recent 30 seconds.
+const analysis = await client.getAvSyncAnalysis({
+  range: { kind: 'recent', durationMs: 30_000 },
+});
+console.log(analysis.status, analysis.finding, analysis.confidence, analysis.limitations);
+
+// Export one evidence page. Follow page.nextCursor for additional pages.
+const evidence = await client.getAvSyncRawTelemetry({
+  range: { kind: 'recent', durationMs: 30_000 },
+  pageSize: 200,
+});
+```
+
+Do not poll all four methods for a status panel. Poll playback status, invoke immediate capture when needed, and query analysis/raw evidence on demand. Analysis can publish analysis results and update diagnostic alerts; merely querying it does not enable background sampling.
+
+### 8.7 Version Information
 
 | Member | Description |
 | :--- | :--- |
@@ -609,7 +695,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `conversation:answer:chunk` | Answer text chunk received. | `{ questionId; rawDelta; rawText; representations; isComplete }`; deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | Single turn answer completed. | `{ questionId; rawText; representations }`; deprecated `fullAnswer === rawText` |
 
-`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.3.0 without runtime warnings and can be removed only in a future major release.
+`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.4.0 without runtime warnings and can be removed only in a future major release.
 
 **Session**
 
@@ -706,7 +792,7 @@ await client.reconnect();
 
 ## 11. Video Chroma Key (Green Screen) Debugging Guide
 
-When enabling Chroma Key through initial configuration, ensure the following settings are applied (or leave them unconfigured for the SDK's internal auto-detection). The render mode can be selected when constructing the SDK or through Auth connection configuration; after connection, `updateGreenScreenOptions({ enabled })` can switch between the raw and processed paths:
+When enabling client Chroma Key for a plain or legacy stream, ensure the following settings are applied. The SDK never uses these settings to infer a packed transparent layout. The render mode can be selected when constructing the SDK or through Auth connection configuration; after connection, `updateGreenScreenOptions({ enabled })` can switch between the raw and processed paths:
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
@@ -829,11 +915,13 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
 | `AUDIO_OUTPUT_DISABLED` | Thrown by `getAudioElement()` when `output.enabled === false`. |
 
-### 13.5 Camera
+### 13.5 Video / Camera
 
 | Code | Description |
 | :--- | :--- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | Camera controller is unavailable. |
+| `VIDEO_LAYOUT_INVALID` | The explicit `videoLayout` is malformed or violates its declared dimension/alpha contract. Correct the backend metadata before creating the client. |
+| `VIDEO_COMPOSITION_FAILED` | WebGL transparent composition could not initialize, the decoded dimensions differed from the declared packed layout, texture upload failed, or the context was lost. The packed canvas is hidden and no raw-frame fallback is shown; inspect `sdk:error` and recreate the client if needed. |
 
 ### 13.6 Session & State Machine
 
@@ -861,12 +949,36 @@ Enabled by default (`performanceMonitor.enabled !== false`). The metric names un
 
 | `metric` | Meaning |
 | :--- | :--- |
-| `connect_to_first_frame_ms` | Time from `connect()` call to completion of first frame rendering. |
+| `connect_to_first_frame_ms` | Time from `connect()` to `loadeddata` on the SDK-owned internal video element. |
 | `text_send_to_text_response_ms` | Time from sending text query to receiving the first text response chunk. |
 | `text_send_to_audio_response_ms` | Time from sending text query to receiving the first audio response chunk. |
 | `no_speech_report_to_audio_response_ms` | Time from "no-speech" report to receiving the audio response. |
 
-Data structure: `PerformanceMetricRecord` (contains `metric`, `durationMs`, `startedAt`, `endedAt`, and optional `questionId`).
+Data structure: `PerformanceMetricRecord` contains `metric`, `durationMs`, `startedAt`, `endedAt`, optional `questionId`, and optional `attemptId` for first-frame metrics.
+
+### 14.1a Segmented First-Frame Timeline
+
+Every effective connect creates an increasing attemptId after duplicate-connect protection. All stages are cumulative from that connect start. The established connect_to_first_frame_ms name remains compatible and ends exactly at loadeddata on the SDK-owned persistent video element. It does not mean application pixels are already visible, playing occurred, or requestVideoFrameCallback ran.
+
+| Metric | First fact |
+| --- | --- |
+| connect_to_config_ready_ms | connection configuration applied |
+| connect_to_rtc_connected_ms | internal RTC connected |
+| connect_to_video_track_added_ms | remote video track added |
+| connect_to_video_metadata_ms | internal video loadedmetadata |
+| connect_to_first_frame_ms | internal video loadeddata |
+| connect_to_first_frame_timeout_ms | no loadeddata within 10 seconds after RTC connected |
+| connect_to_first_frame_failed_ms | either connect failure path ended before first frame |
+
+A stage is recorded once. A stage that did not occur is never written as 0 and is omitted from the terminal report. First-frame PerformanceMetricRecord values have an optional attemptId; existing conversation metrics continue to use their optional questionId.
+
+After RTC connected, the SDK starts a 10-second first-frame timer. loadeddata, connect failure, explicit disconnect, and dispose clear it. Explicit disconnect, dispose, and a superseded attempt are cancellations only and do not emit failure or timeout metrics. A passive RTC disconnect that does not enter a connect failure path remains bounded by this timer.
+
+### 14.1b Terminal Batch and Plugin Inputs
+
+Every successful, failed, or timed-out attempt produces one immutable SDKPerformanceMetricsReport. Its schema is sdk.performance-metrics, schemaVersion is 1, and it contains attemptId, outcome, startedAt, endedAt, and metrics for present stages only. The SDK package root exports the detached SDK_PERFORMANCE_METRICS_V1 Observer token. Observers receive a deep-cloned frozen snapshot; the SDK does not await handlers, and a plugin throw, rejection, or timeout cannot change connection or media behavior.
+
+The SDK also emits a sanitized Operational Log with category media and event performance.first-frame. Its correlation contains only attemptId; attributes contain only outcome, renderMode, timeoutAfterRtcMs for a timeout, and sparse numeric nodes. It excludes URLs, tokens, connection configuration, room/track/participant identifiers, text, raw DataChannel data, media frames, DOM/LiveKit objects, Error, message, and stack. This SDK release does not upload automatically. A later SkyWalking or other plugin release must register the observer or match the log, then owns setPerformance, reportFrameErrors, authorization, retries, and delivery.
 
 ### 14.2 Custom Reporting
 
@@ -877,7 +989,7 @@ const client = createClient({
   connectConfig: { type: 'auth', config: { avatarId: 'demo' } },
   performanceMonitor: {
     reporter: (metric: PerformanceMetricRecord) => {
-      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.questionId);
+      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.attemptId ?? metric.questionId);
     },
   },
 });
@@ -899,4 +1011,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 2.3.0._
+_Document version consistent with package version: 2.4.0._

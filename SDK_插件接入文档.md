@@ -1,8 +1,8 @@
-# Facemarket 实时数字人 SDK 插件接入文档（v2.2.0）
+# Facemarket 实时数字人 SDK 插件接入文档（v2.4.0）
 
 本文档面向**插件开发者**，说明如何基于 `@sanseng/liveavatar-js-sdk` 的首个公开 Plugin API v1 开发、打包和维护插件。
 
-如果你只是要在应用中安装已有插件，请阅读 [SDK 使用手册](./SDK_使用手册.md) 的“插件引入与配置”章节。当前没有已发布的独立插件包，见“当前已支持插件包”。
+如果你只是要在应用中安装已有插件，请阅读 [SDK 使用手册](./SDK_使用手册.md) 的“插件引入与配置”章节。已发布 SkyWalking 插件；其 v2.4.0 首帧能力状态见“当前已支持插件包”。
 
 ## 1. 适用范围与边界
 
@@ -24,7 +24,7 @@ SDK 保持协议解析、连接状态、会话原文和媒体管线的所有权�
 ```json
 {
   "peerDependencies": {
-    "@sanseng/liveavatar-js-sdk": "^2.2.0"
+    "@sanseng/liveavatar-js-sdk": "^2.4.0"
   }
 }
 ```
@@ -68,13 +68,14 @@ export const examplePlugin: SDKPlugin = {
 | Token                              | 类型                                                | 用途与执行语义                                                                                                                       |
 | ---------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `SDK_OPERATIONAL_LOGS_V1`          | `ObserverPoint<SDKOperationalLogRecord>`            | 观察脱敏的 SDK 运营日志。detached，不阻塞 SDK；记录不含 token、Authorization、正文、原始 DataChannel payload、媒体帧或 Error stack。 |
+| `SDK_PERFORMANCE_METRICS_V1`      | `ObserverPoint<SDKPerformanceMetricsReport>`        | 订阅不可变的首帧终态指标批次；detached、有界、schema 校验且深度冻结。 |
 | `SDK_CONVERSATION_INBOUND_TEXT_V1` | `TransformPoint<SDKInboundText, SDKTextProjection>` | 为下行 answer、system prompt、ASR 产生附加 representation。同步、并行、fail-open；不能修改原文、协议或 FSM。                         |
 | `SDK_AVSYNC_ALERTS_V1`             | `ObserverPoint<AvSyncAlertEvent>`                   | 观察 AV Sync 告警生命周期。detached；安装 observer 不会启动分析。                                                                    |
 | `SDK_AVSYNC_ANALYSES_V1`           | `ObserverPoint<AvSyncAnalysisReport>`               | 观察一次实际 analysis 的结果。每个 single-flight analysis 仅发布一次。                                                               |
 | `SDK_AVSYNC_SESSION_ENDED_V1`      | `ObserverPoint<AvSyncSessionEndedEvent>`            | 观察本地 segment 封口与 worker segment close 之后的会话结束事实。                                                                    |
 | `SDK_AVSYNC_DIAGNOSTICS_V1`        | `CoreServicePoint<SDKAvSyncDiagnosticsService>`     | 消费诊断快照、原始遥测和 analysis 查询服务；结果为防御性复制，插件卸载后旧 proxy 失效。                                              |
 
-`ProviderPoint` 的通用运行时已实现，但 v2.2.0 没有对插件开放的业务 Provider token，因此插件当前不能调用 `registrar.provide()` 交付可被 SDK 使用的业务能力。
+`ProviderPoint` 的通用运行时已实现，但 v2.4.0 没有对插件开放的业务 Provider token，因此插件当前不能调用 `registrar.provide()` 交付可被 SDK 使用的业务能力。
 
 ### 4.1 Observer
 
@@ -98,7 +99,37 @@ export const operationalLogPlugin: SDKPlugin = {
 
 当前 Operational Log 和 AV Sync Observer 都采用 detached 调度：SDK 不等待 handler Promise。handler 的 throw、reject 或 timeout 会禁用该 contribution，并最多触发一次 `sdk:pluginFault`；SDK 的生产、断开、持久化和 dispose 流程仍会继续。
 
-### 4.2 Conversation 文本 Transform
+### 4.2 首帧性能指标与时间线
+
+使用 `SDK_PERFORMANCE_METRICS_V1` 消费数值性能指标。每个有效 payload 的 schema 为 `sdk.performance-metrics`、schemaVersion 为 `1`，包含递增 `attemptId`、outcome `first-frame`、`connect-failed` 或 `first-frame-timeout`，以及仅含已发生阶段的 metrics。各指标从有效 connect 起点累计：配置就绪、RTC 连接、视频轨道加入、视频 metadata、首帧 loadeddata；失败和 timeout 使用各自的终态指标。缺失阶段会省略，绝不填充为 0。
+
+```ts
+import { SDK_PERFORMANCE_METRICS_V1, type SDKPlugin } from "@sanseng/liveavatar-js-sdk";
+
+export const performancePlugin: SDKPlugin = {
+  id: "com.example.performance",
+  apiVersion: 1,
+  setup(registrar) {
+    registrar.observe(SDK_PERFORMANCE_METRICS_V1, {
+      id: "write-performance",
+      handler: (report, { signal }) => {
+        if (signal.aborted) return;
+        for (const metric of report.metrics) {
+          setPerformance(metric.metric, metric.durationMs, report.attemptId);
+        }
+      },
+    });
+  },
+};
+```
+
+该 point 是 detached：队列上限 100、溢出时丢弃最旧记录、handler timeout 为 30 秒且故障隔离。每个 handler 得到深拷贝并冻结的快照；不得修改它、不得让 SDK 等待它，也不得将其当作上传确认。插件自行负责传输、鉴权、批处理、重试、持久化、采样与去重。
+
+需要时间线或 reportFrameErrors 输入时，可在 `SDK_OPERATIONAL_LOGS_V1` 中匹配脱敏事件 `performance.first-frame`。其 correlation 仅有 `{ attemptId }`；attributes 仅有 outcome、render mode、timeout 场景的 timeoutAfterRtcMs 与稀疏数值 nodes。它刻意排除 URL、token、连接配置、room/session/track/participant 标识、文本、原始 DataChannel 数据、媒体帧、DOM/LiveKit 对象、Error、message 与 stack。
+
+当前已经发布的 SkyWalking 插件不会因 SDK 升级而开始上传；它必须在独立的兼容版本中注册该 Observer 和/或 Operational Log handler。
+
+### 4.3 Conversation 文本 Transform
 
 `SDKInboundText` 提供以下字段：
 
@@ -135,7 +166,7 @@ export const plainTextProjectionPlugin: SDKPlugin = {
 
 该 point 是 `sync + parallel + fail-open`：handler 返回 Promise/thenable、抛出异常或返回非法 projection 后会被禁用；原文、Conversation FSM、其他 contribution 和公开事件继续正常工作。
 
-### 4.3 AV Sync 诊断与告警
+### 4.4 AV Sync 诊断与告警
 
 CoreService 必须在 `setup()` 中消费，异步上传工作放在 Observer handler 中：
 
@@ -183,9 +214,9 @@ export const avSyncUploadPlugin: SDKPlugin = {
 
 | 插件包 | 用途                                                                                                | Plugin API | 状态       |
 | ------ | --------------------------------------------------------------------------------------------------- | ---------- | ---------- |
-| 暂无   | 当前 v2.2.0 未发布或未登记任何独立插件包。SDK 导出的 extension point 是开发能力，不是可安装插件包。 | —          | 暂无可用包 |
+| `@sanseng/liveavatar-js-sdk-skywalking` | 已发布的 SkyWalking 集成，当前用于 A/V Sync 诊断与 SDK error；已发布版本不会因 SDK 升级自动消费 v2.4.0 首帧 observer 或日志。 | 需插件独立兼容版本 |
 
-新增实际插件包后，应在本表补充包名、用途、兼容的 SDK/Plugin API 版本、安装命令和其自身文档链接。
+SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `performance.first-frame` 后，才可自行上报 setPerformance 或 reportFrameErrors。SDK 不拥有其鉴权、队列、重试或上传。
 
 ## 7. 发布前检查
 

@@ -1,8 +1,8 @@
-# Facemarket Live Avatar SDK Plugin Integration Guide (v2.2.0)
+# Facemarket Live Avatar SDK Plugin Integration Guide (v2.5.0)
 
 This guide is for **plugin developers**. It explains how to build, package, and maintain a plugin using the first public `@sanseng/liveavatar-js-sdk` Plugin API v1.
 
-If you only need to install an existing plugin in an application, see the “Plugin Import and Configuration” section of the [SDK User Manual](./SDK_User_Manual.md). No standalone plugin package is currently published; see “Currently Supported Plugin Packages.”
+If you only need to install an existing plugin in an application, see the “Plugin Import and Configuration” section of the [SDK User Manual](./SDK_User_Manual.md). For Markdown rendering and SkyWalking integration, see “Currently Supported Plugin Packages.”
 
 ## 1. Scope and boundaries
 
@@ -13,7 +13,7 @@ Plugins are not a security sandbox and must not:
 - define extension points or consume unexported internal tokens;
 - replace RTC, transport, the Conversation FSM, MessageAssembler, media ownership, or AV Sync collection;
 - obtain SDKClient, EventBus, LiveKit Room, tokens, HTTP controllers, or internal controllers;
-- rely on inter-plugin communication or plugin-provided Providers; v2.2.0 exports no business Provider token.
+- rely on inter-plugin communication or plugin-provided Providers; v2.4.0 exports no business Provider token.
 
 The SDK retains ownership of protocol parsing, connection state, conversation source text, and media pipelines. Plugins own their HTTP, authorization, queues, retries, persistence, sampling, deduplication, and drain policy.
 
@@ -24,7 +24,7 @@ Declare the SDK as a peer dependency so a plugin does not embed a second copy of
 ```json
 {
   "peerDependencies": {
-    "@sanseng/liveavatar-js-sdk": "^2.2.0"
+    "@sanseng/liveavatar-js-sdk": "^2.4.0"
   }
 }
 ```
@@ -68,13 +68,14 @@ All tokens are exported from the `@sanseng/liveavatar-js-sdk` package root. A to
 | Token                              | Type                                                | Purpose and execution semantics                                                                                                                                                   |
 | ---------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SDK_OPERATIONAL_LOGS_V1`          | `ObserverPoint<SDKOperationalLogRecord>`            | Observes sanitized SDK operational logs. Detached and non-blocking; records exclude tokens, Authorization, text bodies, raw DataChannel payloads, media frames, and Error stacks. |
+| `SDK_PERFORMANCE_METRICS_V1`      | `ObserverPoint<SDKPerformanceMetricsReport>`        | Observes immutable terminal first-frame metric batches. Detached, bounded, schema-validated, and deeply frozen. |
 | `SDK_CONVERSATION_INBOUND_TEXT_V1` | `TransformPoint<SDKInboundText, SDKTextProjection>` | Adds representations for inbound answers, system prompts, and ASR. Synchronous, parallel, fail-open; cannot change source text, protocol data, or the FSM.                        |
 | `SDK_AVSYNC_ALERTS_V1`             | `ObserverPoint<AvSyncAlertEvent>`                   | Observes the AV Sync alert lifecycle. Detached; installing an observer does not start analysis.                                                                                   |
 | `SDK_AVSYNC_ANALYSES_V1`           | `ObserverPoint<AvSyncAnalysisReport>`               | Observes one result for each real single-flight analysis.                                                                                                                         |
 | `SDK_AVSYNC_SESSION_ENDED_V1`      | `ObserverPoint<AvSyncSessionEndedEvent>`            | Observes session end only after local segment sealing and worker segment close.                                                                                                   |
-| `SDK_AVSYNC_DIAGNOSTICS_V1`        | `CoreServicePoint<SDKAvSyncDiagnosticsService>`     | Consumes diagnostics snapshots, raw telemetry, and analysis queries; results are defensive copies and an old proxy becomes inactive after uninstall.                              |
+| `SDK_AVSYNC_DIAGNOSTICS_V1`        | `CoreServicePoint<SDKAvSyncDiagnosticsService>`     | Consumes playback status, diagnostics snapshots, raw telemetry, and analysis queries; results are defensive copies and an old proxy becomes inactive after uninstall.                              |
 
-The generic `ProviderPoint` runtime exists, but v2.2.0 exposes no business Provider token. Plugins therefore cannot currently call `registrar.provide()` to supply SDK-used business behavior.
+The generic `ProviderPoint` runtime exists, but v2.4.0 exposes no business Provider token. Plugins therefore cannot currently call `registrar.provide()` to supply SDK-used business behavior.
 
 ### 4.1 Observer
 
@@ -98,7 +99,37 @@ export const operationalLogPlugin: SDKPlugin = {
 
 Operational Log and AV Sync Observers are currently detached: the SDK never awaits a handler Promise. A throw, rejection, or timeout disables that contribution and emits at most one `sdk:pluginFault`; SDK production, disconnect, persistence, and disposal continue.
 
-### 4.2 Conversation text Transform
+### 4.2 First-frame Performance Metrics and Timeline
+
+Use `SDK_PERFORMANCE_METRICS_V1` for numeric performance reporting. Each accepted payload has schema `sdk.performance-metrics`, schemaVersion `1`, an increasing `attemptId`, outcome `first-frame`, `connect-failed`, or `first-frame-timeout`, and metrics only for stages that actually occurred. Records are cumulative from the effective `connect()` start: configuration ready, RTC connected, video track added, video metadata, and first-frame `loadeddata`; failure and timeout have their own terminal metric. Missing stages are omitted, never reported as zero.
+
+```ts
+import { SDK_PERFORMANCE_METRICS_V1, type SDKPlugin } from "@sanseng/liveavatar-js-sdk";
+
+export const performancePlugin: SDKPlugin = {
+  id: "com.example.performance",
+  apiVersion: 1,
+  setup(registrar) {
+    registrar.observe(SDK_PERFORMANCE_METRICS_V1, {
+      id: "write-performance",
+      handler: (report, { signal }) => {
+        if (signal.aborted) return;
+        for (const metric of report.metrics) {
+          setPerformance(metric.metric, metric.durationMs, report.attemptId);
+        }
+      },
+    });
+  },
+};
+```
+
+The point is detached with a queue limit of 100, drop-oldest overflow, a 30-second handler timeout, and failure isolation. Each handler receives a deep-cloned frozen snapshot. Do not mutate it, await it from SDK code, or treat it as an upload acknowledgement. The plugin owns transport, authorization, batching, retries, persistence, sampling, and deduplication.
+
+Use the sanitized `SDK_OPERATIONAL_LOGS_V1` event `performance.first-frame` when a backend needs a timeline or `reportFrameErrors` input. Its correlation is only `{ attemptId }`; attributes are only outcome, render mode, timeoutAfterRtcMs for a timeout, and sparse numeric nodes. It deliberately excludes URL, token, connection configuration, room/session/track/participant identifiers, text, raw DataChannel data, media frames, DOM/LiveKit objects, Error, message, and stack.
+
+An already-published SkyWalking plugin does not begin uploading after this SDK upgrade. A separate compatible plugin release must register this Observer and/or the Operational Log handler.
+
+### 4.3 Conversation text Transform
 
 `SDKInboundText` contains:
 
@@ -135,7 +166,7 @@ export const plainTextProjectionPlugin: SDKPlugin = {
 
 This point is `sync + parallel + fail-open`: a thenable result, throw, or invalid projection disables that contribution, while source text, the Conversation FSM, other contributions, and public events continue.
 
-### 4.3 AV Sync diagnostics and alerts
+### 4.4 AV Sync diagnostics and alerts
 
 Consume the CoreService during `setup()` and perform asynchronous upload work in an Observer handler:
 
@@ -163,9 +194,22 @@ export const avSyncUploadPlugin: SDKPlugin = {
 
 The diagnostics service offers:
 
+- `getPlaybackStatus()` — live status; poll only when needed, roughly once per second without overlapping calls.
 - `captureRemoteAvSyncDiagnostics()`
 - `getAvSyncRawTelemetry(query?)`
 - `getAvSyncAnalysis(query?)`
+
+Use playback status for a live panel, immediate capture for a current paired A/V snapshot, raw telemetry for retained evidence export, and analysis for a historical window. The service has the same debug requirements as the client APIs and returns frozen defensive copies. See [API selection and metric availability](./SDK_User_Manual.md#86-playback-status-and-diagnostics-selection).
+
+```ts
+// Inside setup(registrar), consume once; invoke later from plugin-owned work.
+const diagnostics = registrar.consume(SDK_AVSYNC_DIAGNOSTICS_V1);
+const readPlaybackStatus = () => diagnostics.getPlaybackStatus();
+```
+
+Core playback metrics need no debug. Only `presentationFps` requires `debug.avSync`; RTT/ICE fields and browser freezes remain optional. `outputFps` measures completed SDK output; SDK stalls use a one-second output-gap rule. Raw/analysis queries do not collect missing history. Plugins must cancel their own polling in `dispose()`.
+
+Operational `sdk.error` records include `attributes.code` and optional string `attributes.reason` copied from `error.message` (including empty strings). Missing/non-string messages omit `reason`; Error objects and stacks remain excluded.
 
 Plugin uninstall aborts active asynchronous Transform/Provider work, and handlers should observe every execution context `signal`. Calling a retained CoreService proxy after uninstall throws `SDK_PLUGIN_CONTEXT_INACTIVE`.
 
@@ -183,9 +227,10 @@ Applications can install a plugin at construction through `ClientOptions.plugins
 
 | Plugin package | Purpose                                                                                                                                                          | Plugin API | Status               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------- |
-| None           | No standalone plugin package is published or registered for v2.2.0. Exported SDK extension points are development capabilities, not installable plugin packages. | —          | No available package |
+| `@sanseng/liveavatar-js-sdk-markdownrender` | Markdown rendering. See the plugin package documentation for exports, configuration and compatibility. | — | Listed plugin package |
+| `@sanseng/liveavatar-js-sdk-skywalking` | Published SkyWalking integration for A/V Sync diagnostics and SDK errors. Its published release does not consume the v2.4.0 first-frame Observer or log automatically. | — | Requires a separate compatible plugin release |
 
-When an actual package is released, add its name, purpose, compatible SDK/Plugin API versions, installation command, and its own documentation link here.
+Only a later SkyWalking plugin release that registers `SDK_PERFORMANCE_METRICS_V1` and/or `performance.first-frame` can report setPerformance or reportFrameErrors. The SDK does not own that plugin authorization, queue, retry, or delivery.
 
 ## 7. Release checklist
 

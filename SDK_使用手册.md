@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v2.3.0）
+# Facemarket 实时数字人 SDK 使用手册（v2.4.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.3.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.4.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -19,7 +19,7 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ## 2. 从 v1 升级到 v2
 
-从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.3.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
+从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.4.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
 
 ---
 
@@ -225,7 +225,23 @@ await client.connect();
 
 - `video.renderMode === 'raw'`：直接在 `<video>` 上渲染远端轨道（默认类行为以选项为准）。
 - `video.renderMode === 'processed'`：经 Canvas 处理管线（如绿幕）。
-- **Auth 模式**下，服务端返回的绿幕配置会映射为 `renderMode` / `greenScreen`（见 `ConfigManager._fromAuthPayload`）。若本地与远端均未显式配置，由 SDK 内部策略判定。
+- **Auth 模式**下，服务端绿幕配置仍可映射为 `renderMode` / `greenScreen`（见 `ConfigManager._fromAuthPayload`），但绝不会据此选择透明视频布局；省略 `videoLayout` 即保持旧行为。
+
+### 5.4 后端视频布局与透明输出
+
+后端创建会话后，应在创建 client 前把完整响应中的 `videoLayout` 原样传入 `video.videoLayout`。它是远端视频格式的唯一依据；SDK 不会根据尺寸、绿幕参数或像素内容猜测布局。
+
+```ts
+const client = createClient({
+  connectConfig: { type: 'direct', config: { sfuUrl: credentials.sfuUrl, userToken: credentials.userToken } },
+  video: { containerElement: document.getElementById('avatar')!, videoLayout: credentials.videoLayout },
+});
+```
+
+- `plain-v1`（`avatar-video`、H264、`alphaPlane: 'none'`）保持现有 raw 或显式客户端绿幕路径，编码尺寸必须等于内容尺寸。
+- `rgb-alpha-vertical-v1`（`alphaPlane: 'bottom-luma'`）将上半 RGB 和下半 luma alpha 用 WebGL 合成为透明 Canvas；编码高度必须刚好是内容高度的两倍。它优先于 `renderMode` 与 `greenScreen`，不会展示 packed 原始 `<video>`。
+- SDK 会同步校验该契约，保存冻结快照并通过 `client.videoLayout` 暴露。布局在 client 生命周期内不可变；后端布局变化需要新建 client，`updateConnectionConfig()` 与 reconnect 都不会修改它。
+- 省略 `videoLayout` 只为兼容旧调用方，完全保持原有行为，绝不表示透明视频。
 
 ---
 
@@ -275,6 +291,7 @@ await client.connect();
 | `containerElement` | 视频渲染挂载的容器（**业务侧应保证存在且已插入 DOM**）                |
 | `renderMode`       | `'raw'` \| `'processed'`                                              |
 | `greenScreen`      | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`；`isBackgroundKeying` 默认 `false` |
+| `videoLayout`      | 可选后端契约：`PlainVideoLayout` 或 `RGBAlphaVerticalVideoLayout`。在 `createClient()` 前原样传入，构造后不可修改。 |
 | `fitMode`          | `'contain' \| 'cover' \| 'fill' \| 'none'`                            |
 | `camera`           | `{ publishToLiveKit?: boolean }`                                      | 默认 `false`；为 `true` 时 `startCamera()` 将轨道发布到 LiveKit 房间。 |
 | `debug`            | 继承 `BaseOptions`                                                    |
@@ -402,9 +419,10 @@ runtimeClient.uninstallPlugin(plugin.id);
 
 | 插件包 | 用途 | 状态 |
 | --- | --- | --- |
-| 暂无 | v2.3.0 当前没有已发布或已登记的独立插件包。SDK 扩展点不是可直接安装的插件包。 | 暂无可用包 |
+| `@sanseng/liveavatar-js-sdk-markdownrender` | Markdown 渲染；导出、配置和兼容版本见插件包文档。 | 已列入插件目录 |
+| `@sanseng/liveavatar-js-sdk-skywalking` | 已发布的 SkyWalking 集成，当前用于 A/V Sync 诊断与 SDK error；已发布版本不会因 SDK 升级自动消费 v2.4.0 首帧 observer 或日志。 | 需插件独立兼容版本 |
 
-有实际插件包发布后，本表会补充包名、安装命令和链接。
+SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `performance.first-frame` 后，才可自行上报 setPerformance 或 reportFrameErrors。SDK 不拥有其鉴权、队列、重试或上传。
 
 ---
 
@@ -438,7 +456,8 @@ runtimeClient.uninstallPlugin(plugin.id);
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
 | `setRenderFitMode(mode: RenderFitMode): void`            | 设置画面适配模式。                 |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 仅在已连接会话中实时更新绿幕参数。`enabled: true` / `false` 会立即在 processed Canvas 与 raw video 路径间切换；其他参数也即时生效。运行期改动仅作用于当前连接，`reconnect()` 后恢复构造参数或本次 Auth 配置。 |
+| `videoLayout`                                           | 只读的冻结布局副本；旧调用方未提供布局时为 `undefined`。 |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 仅在已连接的 plain/legacy 会话中实时更新绿幕参数，不能替换或展示 `rgb-alpha-vertical-v1` 的 packed 原帧。 |
 | `startAudioCapture(): Promise<void>`                     | 打开麦克风并通过 LiveKit 发布。    |
 | `stopAudioCapture(): Promise<void>`                      | 停止麦克风发布。                   |
 | `setVolume(volume: number): void`                        | 播放音量 `0..1`。                  |
@@ -613,7 +632,7 @@ runtimeClient.uninstallPlugin(plugin.id);
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId; rawDelta; rawText; representations; isComplete }`；deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId; rawText; representations }`；deprecated `fullAnswer === rawText` |
 
-`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.3.0 继续返回且不输出 warning，只能在未来 major 删除。
+`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.4.0 继续返回且不输出 warning，只能在未来 major 删除。
 
 **会话控制**
 
@@ -710,7 +729,7 @@ await client.reconnect();
 
 ## 11. 视频绿幕参数调试指南
 
-通过初始化配置启用绿幕时，请确保已应用以下设置，或不做配置（由 SDK 内部自动判断）。渲染模式可以在创建 SDK 或 Auth 服务端连接配置中确定；连接成功后也可以用 `updateGreenScreenOptions({ enabled })` 在 raw 与 processed 路径间切换。
+对 plain 或 legacy 流通过初始化配置启用客户端绿幕时，请确保已应用以下设置。SDK 不会用这些设置推断 packed 透明布局。渲染模式可以在创建 SDK 或 Auth 服务端连接配置中确定；连接成功后也可以用 `updateGreenScreenOptions({ enabled })` 在 raw 与 processed 路径间切换。
 
 - `video.renderMode = 'processed'`
 - `greenScreen.enabled = true`
@@ -837,11 +856,13 @@ client.updateGreenScreenOptions({
 | `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                                               |
 | `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
 
-### 13.5 摄像头
+### 13.5 视频 / 摄像头
 
 | 代码                              | 说明与处理建议       |
 | --------------------------------- | -------------------- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | 摄像头控制器不可用。 |
+| `VIDEO_LAYOUT_INVALID` | 显式 `videoLayout` 格式错误或不满足尺寸/alpha 契约；请在创建 client 前修正后端元数据。 |
+| `VIDEO_COMPOSITION_FAILED` | WebGL 透明合成无法初始化、解码尺寸与 packed 声明不符、纹理上传失败或 context 丢失。SDK 会隐藏 packed Canvas，绝不回退展示原始帧；请处理 `sdk:error` 并按需重建 client。 |
 
 ### 13.6 会话与状态机
 
@@ -869,12 +890,36 @@ client.updateGreenScreenOptions({
 
 | `metric`                                | 含义                           |
 | --------------------------------------- | ------------------------------ |
-| `connect_to_first_frame_ms`             | `connect()` 至首帧渲染完成耗时 |
+| `connect_to_first_frame_ms`             | `connect()` 至 SDK 内部 video 的 `loadeddata` 耗时 |
 | `text_send_to_text_response_ms`         | 文本发送到首段文本响应         |
 | `text_send_to_audio_response_ms`        | 文本发送到首段音频响应         |
 | `no_speech_report_to_audio_response_ms` | 无人声上报到音频响应           |
 
-记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`）。
+记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`；首帧相关记录另有可选 `attemptId`）。
+
+### 14.1a 分段首帧时间线
+
+每次有效的 connect 都有递增的 attemptId。只有在重复连接防护之后才会创建 attempt；所有阶段均相对该次 connect 起点累计。已有的 connect_to_first_frame_ms 名称保持兼容，其终点精确定义为 SDK 内部持久 video 元素触发 loadeddata，而不是业务 DOM 已显示像素、playing 或 requestVideoFrameCallback。
+
+| 指标 | 首次事实 |
+| --- | --- |
+| connect_to_config_ready_ms | 连接配置应用完成 |
+| connect_to_rtc_connected_ms | 内部 RTC 已连接 |
+| connect_to_video_track_added_ms | 远端视频轨道已加入 |
+| connect_to_video_metadata_ms | 内部 video 触发 loadedmetadata |
+| connect_to_first_frame_ms | 内部 video 触发 loadeddata |
+| connect_to_first_frame_timeout_ms | RTC 连接后 10 秒仍没有 loadeddata |
+| connect_to_first_frame_failed_ms | 任一 connect 失败路径在首帧前结束 |
+
+阶段只记录一次；没有发生的阶段不会被写成 0，也不会出现在该 attempt 的终态报告。首帧相关 PerformanceMetricRecord 会带可选 attemptId，其余问答指标继续使用可选 questionId。
+
+RTC 连接后，SDK 启动 10 秒首帧等待计时器。loadeddata、connect 失败、显式 disconnect 和 dispose 都会清理计时器。显式 disconnect、dispose 或被下一次连接替换的 attempt 仅取消，不产生失败或超时指标。被动 RTC 断开若不走 connect 失败路径，仍由该 10 秒计时器收口。
+
+### 14.1b 终态批次与插件输入
+
+每个成功、connect 失败或首帧超时的 attempt 会生成一次只读 SDKPerformanceMetricsReport：schema 为 sdk.performance-metrics，schemaVersion 为 1，包含 attemptId、outcome、startedAt、endedAt 与只包含已观察指标的 metrics。SDK 根入口同时导出 detached Observer token SDK_PERFORMANCE_METRICS_V1。Observer 获得深拷贝且冻结的快照；SDK 不等待 handler，也不因插件 handler 的异常、拒绝或超时改变连接或媒体流程。
+
+SDK 还会发送一条脱敏 Operational Log：category 为 media，event 为 performance.first-frame，correlation 只有 attemptId；attributes 只有 outcome、renderMode、timeout 场景下的 timeoutAfterRtcMs 和稀疏数值 nodes。该日志不包含 URL、token、连接配置、房间/轨道/参与者标识、文本、DataChannel 原文、媒体帧、DOM/LiveKit 对象、Error、message 或 stack。当前 SDK 不自动上传；后续 SkyWalking 或其他插件需在其自身独立版本中注册 observer 或匹配该日志，之后自行负责 setPerformance、reportFrameErrors、鉴权、重试和投递。
 
 ### 14.2 自定义上报
 
@@ -885,7 +930,7 @@ const client = createClient({
   connectConfig: { type: 'auth', config: { avatarId: 'demo' } },
   performanceMonitor: {
     reporter: (metric: PerformanceMetricRecord) => {
-      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.questionId);
+      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.attemptId ?? metric.questionId);
     },
   },
 });
@@ -907,4 +952,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：2.3.0。_
+_文档版本与包版本一致：2.4.0。_
