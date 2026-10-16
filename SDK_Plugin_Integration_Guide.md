@@ -13,7 +13,7 @@ Plugins are not a security sandbox and must not:
 - define extension points or consume unexported internal tokens;
 - replace RTC, transport, the Conversation FSM, MessageAssembler, media ownership, or AV Sync collection;
 - obtain SDKClient, EventBus, LiveKit Room, tokens, HTTP controllers, or internal controllers;
-- rely on inter-plugin communication or plugin-provided Providers; v2.4.0 exports no business Provider token.
+- rely on inter-plugin communication or plugin-provided Providers; v2.5.0 exports no business Provider token.
 
 The SDK retains ownership of protocol parsing, connection state, conversation source text, and media pipelines. Plugins own their HTTP, authorization, queues, retries, persistence, sampling, deduplication, and drain policy.
 
@@ -24,10 +24,12 @@ Declare the SDK as a peer dependency so a plugin does not embed a second copy of
 ```json
 {
   "peerDependencies": {
-    "@sanseng/liveavatar-js-sdk": "^2.4.0"
+    "@sanseng/liveavatar-js-sdk": "^2.5.0"
   }
 }
 ```
+
+The `^2.5.0` minimum above is required for plugins that call `getPlaybackStatus()`. It does not assert the compatibility range of any published plugin package.
 
 Export one or more `SDKPlugin` objects. Do not import types or tokens from `src/` or any other SDK internal path; import only from `@sanseng/liveavatar-js-sdk`.
 
@@ -75,7 +77,7 @@ All tokens are exported from the `@sanseng/liveavatar-js-sdk` package root. A to
 | `SDK_AVSYNC_SESSION_ENDED_V1`      | `ObserverPoint<AvSyncSessionEndedEvent>`            | Observes session end only after local segment sealing and worker segment close.                                                                                                   |
 | `SDK_AVSYNC_DIAGNOSTICS_V1`        | `CoreServicePoint<SDKAvSyncDiagnosticsService>`     | Consumes playback status, diagnostics snapshots, raw telemetry, and analysis queries; results are defensive copies and an old proxy becomes inactive after uninstall.                              |
 
-The generic `ProviderPoint` runtime exists, but v2.4.0 exposes no business Provider token. Plugins therefore cannot currently call `registrar.provide()` to supply SDK-used business behavior.
+The generic `ProviderPoint` runtime exists, but v2.5.0 exposes no business Provider token. Plugins therefore cannot currently call `registrar.provide()` to supply SDK-used business behavior.
 
 ### 4.1 Observer
 

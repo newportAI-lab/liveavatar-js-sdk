@@ -529,6 +529,7 @@ console.log(status.connection.overall.state, status.quality, status.qualityReaso
 console.log(status.ice.connectionType, status.ice.protocol, status.ice.relayProtocol);
 console.log(status.ice.rttMs, status.ice.rttAgeMs, status.ice.rttValidForMs);
 console.log(status.output?.outputFps, status.output?.stallCount);
+console.log(status.output?.stallState, status.output?.stallDurationMs, status.output?.currentStallDurationMs);
 
 for (const track of status.tracks) {
   console.log({
@@ -550,7 +551,25 @@ for (const track of status.tracks) {
 - Only `presentationFps` needs `debug: { avSync: true }` or `debug: { avSync: { enabled: true } }`; `debug: true` alone is insufficient. ICE details, RTT, browser freezes and presentation FPS can remain unavailable even with debug. Accurate one-way/end-to-end latency, physical screen FPS and all perceived stalls are not provided.
 - Before connection/after teardown, tracks are empty; `output` can be null without a supported active renderer. Stop polling before disposing the client; calls after disposal reject. Connection duration is not collected.
 
-See [the full metric contract](docs/architecture/playback-status.md) for units, quality thresholds and availability details.
+#### Returned Fields and Units
+
+| Field                                                                                    | Meaning and unit                                                                                         |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `sampledAtMs`, `ice.sampledAtMs`, `ice.rttMeasuredAtMs`                                  | Monotonic `performance.now()` milliseconds, not Unix timestamps                                          |
+| `ice.rttMs`, `ice.rttAgeMs`, `ice.rttValidForMs`                                         | RTT, observed age and validity in milliseconds; validity is fixed at 5000                                |
+| `tracks[].packetLossRate`, `tracks[].bitrateBps`                                         | Interval loss ratio 0–1 and receive bitrate in bit/s; excludes total ICE/TURN bandwidth overhead         |
+| `tracks[].width`, `tracks[].height`, `tracks[].decodedFps`                               | Decoded video dimensions in pixels and decoded FPS; not Canvas dimensions or final display FPS           |
+| `tracks[].jitterMs`, `tracks[].networkQuality`                                           | RTP jitter in milliseconds and latest remote-participant LiveKit quality; unknown before a quality event |
+| `tracks[].freezeCount`, `tracks[].freezeDurationSeconds`, `tracks[].intervalFreezeCount` | Browser-defined cumulative freezes, cumulative seconds and interval freeze count; optional fields        |
+| `output.stallCount`                                                                      | Includes the ongoing stall once; resets on track replacement/render-mode change                          |
+| `output.stallDurationMs`, `output.currentStallDurationMs`                                | Completed cumulative stall duration and current stall duration, separately in milliseconds               |
+| `output.stallState`, `output.stallThresholdMs`                                           | `suspended`/`warming-up`/`flowing`/`stalled`; threshold fixed at 1000 milliseconds                       |
+
+`outputFps` is null without sufficient valid output samples, and zero during a confirmed output stall. Raw output statistics are unavailable without `requestVideoFrameCallback`. `presentationFps` is video-element presentation FPS and needs sufficient valid presentation evidence no older than 3 seconds; it differs from decoded FPS and SDK output FPS.
+
+Quality rules: disconnected RTC means `disconnected`; no remote receivers means `no-media`. Any track with poor/lost network quality, interval loss >=5%, a new freeze, zero receive bitrate or zero interval decoded FPS, or an ongoing SDK output stall, means `degraded`. `good` requires valid interval loss and bitrate for every track with no degradation; otherwise the result is `unknown`. `qualityReasons` provides track-qualified reasons, with `sdk:output-stall` for an ongoing output stall.
+
+Maintainers can find the full metric contract, quality thresholds and availability details in `docs/architecture/playback-status.md` in the SDK source repository.
 
 #### Diagnosis and Historical Evidence
 
@@ -695,7 +714,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `conversation:answer:chunk` | Answer text chunk received. | `{ questionId; rawDelta; rawText; representations; isComplete }`; deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | Single turn answer completed. | `{ questionId; rawText; representations }`; deprecated `fullAnswer === rawText` |
 
-`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.4.0 without runtime warnings and can be removed only in a future major release.
+`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.5.0 without runtime warnings and can be removed only in a future major release.
 
 **Session**
 
@@ -1011,4 +1030,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 2.4.0._
+_Document version consistent with package version: 2.5.0._

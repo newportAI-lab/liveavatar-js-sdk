@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v2.4.0）
+# Facemarket 实时数字人 SDK 使用手册（v2.5.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.4.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.5.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -19,7 +19,7 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ## 2. 从 v1 升级到 v2
 
-从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.4.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
+从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.5.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
 
 ---
 
@@ -496,6 +496,7 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
 | `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。   |
 | `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
+| `getPlaybackStatus(): Promise<PlaybackStatus>` | 当前连接、接收媒体 ICE/带有效期 RTT、各轨道接收指标、SDK 输出 FPS 和停顿；支持单轨，基础指标无需 debug。 |
 | `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>`      | 主动采集远端音视频接收统计和本次连接的轨道生命周期节点；未配置 `debug` 也可调用。        |
 | `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>`           | 读取当前有界上下文和一页 `avSyncLogs`。默认最近 5 分钟、200 条；通过 `range`、`pageSize` 和 `page.nextCursor` 分页。窗口事实摘要默认启用，可用 `includeSummary: false` 关闭；日志查询和摘要在 Dedicated Worker 执行。 |
 | `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | 在 telemetry Worker 中异步分析完整保留窗口；调用方自行决定轮询周期。返回 `status`、`finding`、`features`、`layers` 和有界限制信息，不会因证据不足抛出异常；自动视频停滞通知不依赖调用此方法。 |
@@ -510,7 +511,92 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 
 多远端参与者时，全局音频速率的分母是所有有效远端 audio channel 的观测时长之和。`participants` 及告警 participant IDs 只包含本窗口内具有远端媒体证据的身份；本地或仅连接质量相关的参与者不会出现在分析结果中。
 
-### 8.6 版本信息
+### 8.6 播放状态与诊断 API 选择
+
+以下播放状态能力自 **2.5.0** 提供。业务连接与播放面板使用 `getPlaybackStatus()`，其他 API 用于诊断采样、历史证据导出与分析。
+
+| API                                | 主要用途                                                                 | 立即采集统计 | debug 要求                                                       |
+| ---------------------------------- | ------------------------------------------------------------------------ | ------------ | ---------------------------------------------------------------- |
+| `getPlaybackStatus()`              | 当前连接、ICE/RTT、各轨道丢包率/码率/分辨率/FPS、SDK 输出 FPS/停顿和质量 | 是           | 基础指标不需要；`presentationFps` 需要 `debug.avSync`            |
+| `captureRemoteAvSyncDiagnostics()` | 一次音视频配对接收快照、生命周期与 TimeSync 上下文                       | 是           | 无 debug 也可调用；持续 TimeSync 证据需要 A/V 诊断               |
+| `getAvSyncRawTelemetry(query?)`    | 导出已保留证据和一页诊断日志                                             | 否           | 连续接收/帧证据需提前开启 `debug.avSync`；帧 metadata 需显式启用 |
+| `getAvSyncAnalysis(query?)`        | 分析保留窗口内的接收、解码、渲染、绑定与播放异常                         | 否           | 需要充分证据和分析 Worker，否则返回 `insufficient_evidence`      |
+
+这些 API 共享部分接收统计，但用途不同。播放状态支持单音频、单视频和音视频，区间基线独立于 A/V 诊断采样；即时诊断快照按完整音视频配对组织。原始遥测和分析无法补回未曾采集的历史事实。仅 `avSyncLogs` 分页；其他遥测数组是有界上下文，不一定按相同请求窗口裁剪。断连后可查询冻结保留的证据；重连替换会话，dispose 清除证据。
+
+#### 查询当前播放状态
+
+```ts
+// 复用已初始化的 client；建议约每秒串行调用一次，避免重叠请求。
+const status = await client.getPlaybackStatus();
+console.log(status.connection.overall.state, status.quality, status.qualityReasons);
+console.log(status.ice.connectionType, status.ice.protocol, status.ice.relayProtocol);
+console.log(status.ice.rttMs, status.ice.rttAgeMs, status.ice.rttValidForMs);
+console.log(status.output?.outputFps, status.output?.stallCount);
+console.log(status.output?.stallState, status.output?.stallDurationMs, status.output?.currentStallDurationMs);
+
+for (const track of status.tracks) {
+  console.log({
+    kind: track.kind,
+    lossPercent: track.packetLossRate === null ? null : track.packetLossRate * 100,
+    receiveKbps: track.bitrateBps === null ? null : track.bitrateBps / 1000,
+    width: track.width,
+    height: track.height,
+    decodedFps: track.decodedFps,
+  });
+}
+```
+
+- 丢包率和码率需要两个兼容样本；新建或替换 receiver 后重新建立基线。`null`/`unknown` 表示不可用，不等于零或连接失败。
+- ICE 统计来自接收媒体所使用的 PeerConnection：单 PC 使用共享 publisher，双 PC 的两种模式均使用 subscriber。TURN 与 UDP 不是互斥选项；`relayProtocol` 表示本地客户端到 TURN 的协议。
+- RTT 是客户端到 SFU 的 STUN 往返时间。首次采样建立响应计数基线，计数增加后才提供带年龄的 RTT，5 秒后过期。`rttMeasuredAtMs` 是 SDK 观察时间，不是准确的 STUN 完成时间；重复读取不会刷新未变化的证据。
+- `outputFps` 统计不同源帧成功完成 Canvas 绘制/Worker 确认的速率（raw 模式使用受支持的视频帧回调），不是物理屏幕 FPS。SDK 停顿指首帧输出后连续至少 1 秒无新输出，时长不包含每次间隔的首个 1 秒，也不计主动暂停和后台页面；浏览器冻结计数单独保留。
+- `quality` 是固定的接收/输出启发式判断，不是端到端质量实测分数；取值为 `disconnected`、`no-media`、`unknown`、`good` 或 `degraded`。
+- 仅 `presentationFps` 需要 `debug: { avSync: true }` 或 `debug: { avSync: { enabled: true } }`；单独 `debug: true` 不够。即使开启 debug，ICE 详情、RTT、浏览器冻结统计和展示 FPS 也可能不可用。当前不提供准确单向/端到端延迟、物理屏幕 FPS 或所有用户感知卡顿。
+- 连接建立前/拆除后，轨道列表为空；没有支持的活动渲染器时 `output` 可为 null。dispose 前停止轮询，dispose 后调用会拒绝。不采集连接持续时长。
+
+#### 返回字段与单位
+
+| 字段                                                                                     | 含义与单位                                                                    |
+| ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `sampledAtMs`、`ice.sampledAtMs`、`ice.rttMeasuredAtMs`                                  | `performance.now()` 单调时钟毫秒，不是 Unix 时间                              |
+| `ice.rttMs`、`ice.rttAgeMs`、`ice.rttValidForMs`                                         | RTT、观察年龄和有效期，均为毫秒；有效期固定 5000                              |
+| `tracks[].packetLossRate`、`tracks[].bitrateBps`                                         | 区间丢包比例 0–1、接收码率 bit/s；不包含 ICE/TURN 总带宽开销                  |
+| `tracks[].width`、`tracks[].height`、`tracks[].decodedFps`                               | 解码视频尺寸（像素）、解码帧率；不是 Canvas 尺寸或最终显示帧率                |
+| `tracks[].jitterMs`、`tracks[].networkQuality`                                           | RTP jitter（毫秒）、最新远端参与者 LiveKit 质量等级；没有质量事件时为 unknown |
+| `tracks[].freezeCount`、`tracks[].freezeDurationSeconds`、`tracks[].intervalFreezeCount` | 浏览器定义的累计冻结次数、累计秒数、区间次数；字段可缺失                      |
+| `output.stallCount`                                                                      | 包含正在持续的一次停顿，每次只计一次；轨道替换/渲染模式切换重置               |
+| `output.stallDurationMs`、`output.currentStallDurationMs`                                | 已结束停顿的累计时长、当前停顿时长（毫秒），分别返回                          |
+| `output.stallState`、`output.stallThresholdMs`                                           | `suspended`/`warming-up`/`flowing`/`stalled`；阈值固定 1000 毫秒              |
+
+没有有效输出样本时 `outputFps` 为 null；确认输出停顿时为 0。raw 模式没有 `requestVideoFrameCallback` 时输出统计不可用。`presentationFps` 是视频元素展示帧率，依赖足够且未超过 3 秒的有效展示证据；它与解码 FPS、SDK 输出 FPS 不同。
+
+质量规则：RTC 未连接为 `disconnected`，没有远端接收轨道为 `no-media`；任一轨道出现 poor/lost 网络质量、区间丢包率 >=5%、新冻结、零接收码率或区间零解码 FPS，或当前 SDK 输出停顿时为 `degraded`。所有轨道都有有效区间丢包率和码率且未触发降级才为 `good`，否则为 `unknown`。`qualityReasons` 提供轨道限定原因，输出停顿使用 `sdk:output-stall`。
+
+维护者可在 SDK 源码仓库的 `docs/architecture/playback-status.md` 查阅完整指标契约、质量阈值和可用性。
+
+#### 按需诊断与历史证据
+
+```ts
+// 主动采集当前接收快照；不要求 debug。
+const snapshot = await client.captureRemoteAvSyncDiagnostics();
+
+// 分析此前已采集的最近 30 秒证据。
+const analysis = await client.getAvSyncAnalysis({
+  range: { kind: 'recent', durationMs: 30_000 },
+});
+console.log(analysis.status, analysis.finding, analysis.confidence, analysis.limitations);
+
+// 导出一页证据；使用 page.nextCursor 获取后续页。
+const evidence = await client.getAvSyncRawTelemetry({
+  range: { kind: 'recent', durationMs: 30_000 },
+  pageSize: 200,
+});
+```
+
+状态面板不需要同时轮询四个方法：轮询播放状态，按需即时采样，历史分析和证据导出由用户操作或故障处理触发。分析会发布结果并可能更新诊断告警；查询本身不会开启后台采样。
+
+### 8.7 版本信息
 
 | 成员                        | 说明                   |
 | --------------------------- | ---------------------- |
@@ -632,7 +718,7 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId; rawDelta; rawText; representations; isComplete }`；deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId; rawText; representations }`；deprecated `fullAnswer === rawText` |
 
-`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.4.0 继续返回且不输出 warning，只能在未来 major 删除。
+`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.5.0 继续返回且不输出 warning，只能在未来 major 删除。
 
 **会话控制**
 
@@ -952,4 +1038,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：2.4.0。_
+_文档版本与包版本一致：2.5.0。_
