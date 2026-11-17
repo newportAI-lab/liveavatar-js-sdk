@@ -1,6 +1,6 @@
-# Facemarket Live Avatar SDK User Manual (v2.5.0)
+# Facemarket Live Avatar SDK User Manual (v2.8.0)
 
-This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.5.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
+This manual corresponds to the npm package **`@sanseng/liveavatar-js-sdk` version 2.8.0**. The SDK is built on **LiveKit Client** and encapsulates live avatar audio/video downlink, microphone/camera uplink, session text, and the HTTP control plane (for fetching connection configurations in Auth mode).
 
 ---
 
@@ -17,9 +17,26 @@ Integrators can complete the setup via constructor parameters, connection APIs, 
 
 ---
 
-## 2. Upgrading from v1 to v2
+## 2. Upgrade Notes
 
-For an upgrade from **v1.3.2 or v1.3.3** to the current **v2.5.0**, see the dedicated [SDK v1 → v2 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md). It covers backend DataChannel compatibility verification, canonical conversation-event fields, disconnect error handling, microphone RMS thresholds, and optional A/V Sync and plugin capabilities.
+For a migration from 1.x to **2.8.0**, follow the [SDK 1.x → 2.8.0 Upgrade Guide](./SDK_v1_to_v2_Upgrade_Guide.md) for connection, event, microphone, and performance-reporting changes. It uses v1.3.2/v1.3.3 as the main baseline and lists additional checks for earlier 1.x versions. Historical verification remains limited to v1.3.2/v1.3.3 → v2.3.0; coverage through 2.8.0 does not establish real integration acceptance for every path. Version 2.8.0 is currently unreleased.
+
+### Upgrading from 2.7.x to 2.8.0
+
+- `startAudioCapture()` only waits for microphone enablement and LiveKit publication; it no longer automatically creates an SDK-owned sampling graph. Explicitly await `startMicLevel()` before reading with synchronous, read-only `getMicLevel()`, and call `stopMicLevel()` when finished. The compatible `getMicrophoneAudioLevel()` alias also requires explicit monitoring startup; it is deprecated for removal in 3.x. Drive the icon from startup and `isAudioCapturing`, independently of level availability.
+- The first read after successful `startMicLevel()` returns real RMS, including silence (`0`); disabled monitoring, no active microphone, preparation, or unavailability returns `null`. Sampling failure does not stop publication. Handle cancellation (`AbortError`) and nonfatal `AUDIO_INPUT_MONITORING_UNAVAILABLE` independently. Monitoring may register early, but do not await it before triggering capture.
+- Capture stop, disconnect, and disposal immediately revoke old startup authority. Cancelled startup can resolve without enabling capture; check current state when operations race. The SDK reclaims late tracks and isolates old-resource cleanup; sampling recovery never reacquires a microphone or switches devices. See the local microphone sections.
+- Browser permission failures classified as `permission` from structured evidence use `warn` instead of `error` in operational logs; public errors and Promise rejections remain unchanged. Error-only consumers must include warn; see the logging section.
+
+### Upgrading from 2.6.x to 2.7.0
+
+- Direct adds optional `sessionId`. After configuration is first successfully resolved/applied, `client.sessionId` changes from the previous `undefined` to a caller ID or generated ID with an `sdk-` prefix. Update application checks that assumed the getter was always empty. Staging through `updateConnectionConfig()` alone does not change the active value; see Section 5.2.
+- Logging V3, performance V2, AV Sync Observer V2, and diagnostics CoreService V3 are optional new extension points requiring SDK **2.7.0** or later. Plugin API remains **1**. Older extension points remain available; select one version of a fact stream to avoid duplicate uploads. SDK upgrades do not automatically migrate plugins, collector schemas, or queries.
+
+### Upgrading from 2.5.x to 2.6.0
+
+- `performanceMonitor.reporter` and `setPerformanceMetricReporter()` remain accepted but no longer invoke callbacks; default `[performance-metric]` Console output is also removed. Migrate existing uploads to the `SDK_PERFORMANCE_METRIC_V1` plugin in Section 14.2. The legacy signatures will be removed in 3.0.0.
+- Console levels are scoped to each Client; creating or disposing another Client does not override an existing Client's `debug` setting. Logging V2 and pre-disposal Observer handoff are optional; see Sections 7.5–7.6 and the Plugin Integration Guide.
 
 ---
 
@@ -57,8 +74,8 @@ const client = createClient({
 
 **Behavioral Notes**
 
-- **`preConnect()` / `connect()`**: Resolves the `livekitUrl` and `token` from the current Direct configuration (or the staged replacement configuration from `updateConnectionConfig` / `reconnect` phases), writes them to the context, and establishes the LiveKit connection.
-- **`reconnect()`**: After disconnecting the current session, it calls `refreshConfig()`. In Direct mode, it re-reads the configuration from the `ConfigManager` (including updates applied via `updateConnectionConfig` through `replaceDirectConfig`), without triggering any Auth HTTP calls to pull room data.
+- **`preConnect()`** resolves and caches the current or staged Direct configuration without establishing a LiveKit connection. `connect()` uses valid cached configuration or resolves it before connecting.
+- **`reconnect()`**: Disconnects the current session and reconnects using the latest staged Direct configuration, without fetching room configuration through Auth HTTP.
 - **Token Refresh**: The SDK does not automatically "refresh" server-issued tokens. Token expiry must be handled by the business side by fetching a new token, calling `updateConnectionConfig`, and then triggering `reconnect()`.
 
 **Usage Restrictions**
@@ -72,7 +89,7 @@ const client = createClient({
 
 ### 2.2 Auth Mode
 
-**Description** The caller provides an `avatarId` (and optionally `authToken` or `avatarVoice`). The SDK fetches the authentication and room configuration (`ConnectionConfig`) via the `HttpController`, and can merge server-returned `videoOptions` (e.g., green screen toggles) into the context.
+**Description** The caller provides an `avatarId` (and optionally `authToken` or `avatarVoice`). The SDK fetches authentication and room configuration over HTTP and applies server-returned `videoOptions`, such as green-screen settings.
 
 **Prerequisites**
 
@@ -110,9 +127,9 @@ client.setAuthToken('jwt-or-business-token');
 
 **Behavioral Notes**
 
-- **`preConnect()` / `connect()`**: Fetches the token and connection payload via HTTP, resolves them into the `livekitUrl`, `token`, `roomId`, and optional `videoOptions`, and then establishes the LiveKit connection.
-- **`reconnect()`**: After disconnecting, it calls `refreshConfig()`, which **re-triggers the HTTP request** to fetch the latest `ConnectionConfig` (the cache is cleared and reloaded).
-- **`setAuthToken`**: Updates the token in the context. If the `HttpController` already exists, it synchronizes the authentication retrieval logic.
+- **`preConnect()`** fetches and caches connection configuration over HTTP without establishing a LiveKit connection. `connect()` uses valid cached configuration or fetches it before connecting.
+- **`reconnect()`**: Disconnects and **fetches the latest room configuration over HTTP**.
+- **`setAuthToken()`** updates the token for subsequent authentication and configuration requests but does not invalidate cached room configuration. If fresh configuration is required immediately and `reconnect()` is disallowed, dispose the old instance and create a new one with the new token.
 
 **Usage Restrictions**
 
@@ -132,7 +149,7 @@ client.setAuthToken('jwt-or-business-token');
 | **Required Fields** | `sfuUrl` + `userToken` | `avatarId` + valid `authToken` (constructor or `setAuthToken`). |
 | **`setAuthToken`** | Not used for resolving LiveKit connection config. | Mandatory or recommended to inject before connecting. |
 | **`updateConnectionConfig`**| Available; applies to the Direct config used in the **next** `preConnect()` / `connect()` or `reconnect()`. | Unavailable (throws error). |
-| **`reconnect()` Refresh** | Uses `refreshConfig()` to read Direct path config (includes updates via `replaceDirectConfig`). | Uses `refreshConfig()` to re-fetch via HTTP. |
+| **`reconnect()` Refresh** | Uses the latest staged Direct configuration. | Fetches the latest configuration over HTTP. |
 
 ---
 
@@ -208,36 +225,53 @@ await client.connect();
 - `conversation:answer:chunk`
 - `conversation:answer:completed`
 
-**Convention**: `questionId` is a short string (typically **4 characters** in practice) that is only guaranteed to be unique within the current session; it is **not suitable** for use as a long-term persistent primary key.
+**Caution**: SDK-generated `questionId` values are short random strings without session-level collision checking. They can collide and must not be treated as unique or as persistent primary keys; use application-owned identifiers and account for correlation collisions.
 
 **Strong Recommendation**: Upon receiving `conversation:answer:completed`, clear the local buffers (text concatenation, UI states, etc.) associated with that `questionId` to prevent memory growth and display errors caused by ID reuse.
 
-### 5.2 Control Plane and Media Plane
+### 5.2 Session correlation (Since 2.7.0)
 
-- **Media Plane**: Handled by `LiveKitService`, which manages LiveKit room connections, audio/video track subscription and publishing, and the transmission of session text and protocol messages via the **Data Channel**.
-- **Control Plane (Auth)**: Handled by `HttpController` + `ConfigManager`. This plane is responsible for fetching the `livekitUrl`, `token`, `roomId`, and optional server-side `videoOptions` (such as green screen toggles) in Auth Mode. There is **no** independent "Business WebSocket" channel parallel to LiveKit exposed in the external API.
+Optional Direct `sessionId` and the unified-session extension points below are available since SDK **2.7.0**. Plugins using the new points must require SDK **2.7.0** or later. Plugin API remains **1**.
 
-### 5.3 Video Rendering Modes
-
-- `video.renderMode === 'raw'`: Remote tracks are rendered directly onto the `<video>` element (default behavior depends on options).
-- `video.renderMode === 'processed'`: Renders via a Canvas processing pipeline (e.g., for green screen/chroma key).
-- **In Auth Mode**, server green-screen configuration may still be mapped to `renderMode` / `greenScreen` (refer to `ConfigManager._fromAuthPayload`). It never selects a transparent video layout: an omitted `videoLayout` preserves legacy behavior.
-
-### 5.4 Backend Video Layout and Transparent Output
-
-When the backend creates a session, pass its complete `videoLayout` response into `video.videoLayout` before creating the client. This is the only source of truth for the remote video format; the SDK does not inspect dimensions, green-screen flags, or pixels to guess it.
+Direct `connectConfig.config` and `updateConnectionConfig()` accept `sessionId?: string`. Strings are trimmed. Omitted, `undefined`, empty, whitespace-only, or runtime `null` values select an SDK-generated ID with an `sdk-` prefix. The suffix uses `crypto.randomUUID()` when available, with a timestamp and random-string fallback otherwise. Treat it as an opaque string rather than parsing its suffix format. Other non-string values fail with `SDK_PRECONNECT_FAILED`. This is a business correlation ID, not a credential; Direct never populates the Auth-only `serverSessionId`.
 
 ```ts
 const client = createClient({
-  connectConfig: { type: 'direct', config: { sfuUrl: credentials.sfuUrl, userToken: credentials.userToken } },
-  video: { containerElement: document.getElementById('avatar')!, videoLayout: credentials.videoLayout },
+  connectConfig: {
+    type: 'direct',
+    config: { sfuUrl, userToken, sessionId: 'business-session-42' },
+  },
 });
+// Undefined until configuration is successfully resolved/applied; RTC need not connect first.
+await client.preConnect();
+console.log(client.sessionId); // 'business-session-42'
+client.updateConnectionConfig({ sfuUrl, userToken, sessionId: 'next-session' });
+// Staging keeps the getter and active connection unchanged until configuration is applied.
 ```
 
-- `plain-v1` (`avatar-video`, H264, `alphaPlane: 'none'`) keeps the current raw or explicit client chroma-key path. Its encoded and content dimensions must match.
-- `rgb-alpha-vertical-v1` (`alphaPlane: 'bottom-luma'`) composites the top RGB half and bottom luma alpha half into a transparent WebGL Canvas. Its encoded height must be exactly twice its content height. It takes priority over `renderMode` and `greenScreen`; the packed source `<video>` is never shown.
-- The SDK validates this contract synchronously, snapshots and freezes it for the client lifetime, and exposes it as `client.videoLayout`. A backend layout change requires a new client; `updateConnectionConfig()` and reconnect do not change it.
-- Omitting `videoLayout` is supported only for legacy callers and preserves the old behavior. It never implies transparent video.
+New outputs use `SDKSessionCorrelation`: `{ clientInstanceId, sessionId, sessionEpoch }`. Within one Client, epochs start at **1**, increase for new lifecycles, and are never reused. Caller-supplied `sessionId` values may repeat. Use `clientInstanceId + sessionEpoch` to isolate lifecycles and retain `sessionId` for business joins; a session ID alone is not a persistence uniqueness key. `attemptId` still identifies only one first-frame measurement.
+
+- Direct compares normalized `sfuUrl`, `userToken`, and caller `sessionId`. Unchanged configuration, cache hits, refresh, and internal reconnect retain the lifecycle. Changing only the ID also starts a new epoch when applied; staging alone does not.
+- Explicit `disconnect()` ends the lifecycle. Preparing configuration again starts a new epoch and generates a new automatic ID; a caller ID may repeat. Passive disconnect and internal reconnect teardown do not independently end it.
+- Auth starts a real configuration fetch with a provisional ID prefixed with `sdk-`, using the same UUID-first and fallback rules. Retries and shared in-flight requests retain that epoch. A successful server ID binds within the same epoch; only Log V3 emits `session.id-bound` with the new ID at top-level `sessionId` and only `previousSessionId` in `data`. If the server omits its ID, new outputs retain the local ID. Auth `client.sessionId` keeps its existing server-ID getter contract.
+- Asynchronous work and media resources capture their owning epoch. Delayed results, retained telemetry, and historical fields never borrow attribution from the current session.
+
+Migrate in phases: use `SDK_OPERATIONAL_LOGS_V3` (`sdk.log`, schemaVersion 3), `SDK_PERFORMANCE_METRIC_V2` or `SDK_PERFORMANCE_METRICS_V2` (batch `sdk.performance-metrics`, version 2), and `SDK_AVSYNC_ALERTS_V2`, `SDK_AVSYNC_ANALYSES_V2`, `SDK_AVSYNC_SESSION_ENDED_V2`, and `SDK_AVSYNC_DIAGNOSTICS_V3`. New contracts use application `sessionId` plus `sessionEpoch`, name the media diagnostics ID `avsyncSessionId`, and omit `monitoringSessionId`. See the plugin guide for registration examples.
+
+Log V1/V2, performance V1, old AV Sync extension points, direct Client diagnostics methods, and public events retain their fields, schemas, timing, and meanings. `monitoringSessionId` still joins legacy outputs; legacy AV Sync `sessionId` remains a media diagnostics ID. Log V3 uses top-level application `sessionId` for the local/bound ID and separate media `avsyncSessionId`; it does not duplicate Auth `serverSessionId`. Plugin API remains **1**.
+
+The current SkyWalking plugin **1.1.0** consumes only old contracts. Keep its matching old extension points until a separate plugin migration; an SDK upgrade does not migrate the plugin or collector. Migrate the plugin, collector schema, and queries before the planned **3.0** removal of legacy `monitoringSessionId` outputs. That removal is not part of this change.
+
+### 5.3 Control Plane and Media Plane
+
+- **Media Plane**: Connects to LiveKit rooms, subscribes to and publishes audio/video, and transmits session text and protocol messages through the **Data Channel**.
+- **Control Plane (Auth)**: Fetches over HTTP the `livekitUrl`, `token`, `roomId`, and optional server-side `videoOptions` (such as green screen toggles) in Auth Mode. There is **no** independent "Business WebSocket" channel parallel to LiveKit exposed in the external API.
+
+### 5.4 Video Rendering Modes
+
+- `video.renderMode === 'raw'`: Remote tracks are rendered directly onto the `<video>` element (default behavior depends on options).
+- `video.renderMode === 'processed'`: Renders via a Canvas processing pipeline (e.g., for green screen/chroma key).
+- **In Auth Mode**, server green-screen configuration may be mapped to `renderMode` / `greenScreen`.
 
 ---
 
@@ -270,6 +304,7 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | `type` | `'direct'` | **Yes** |
 | `config.sfuUrl` | `string` | **Yes** |
 | `config.userToken` | `string` | **Yes** |
+| `config.sessionId` | `string` | No; since 2.7.0, trimmed, automatically generated when omitted |
 
 **Auth Mode**
 
@@ -287,7 +322,6 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | `containerElement` | The container where the video is mounted (**Ensure it exists and is inserted into the DOM**). |
 | `renderMode` | `'raw'` \| `'processed'` |
 | `greenScreen` | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`; `isBackgroundKeying` defaults to `false`. |
-| `videoLayout` | Optional backend contract: `PlainVideoLayout` or `RGBAlphaVerticalVideoLayout`. Validate/pass it exactly as returned before `createClient()`; it is immutable after construction. |
 | `camera` | `{ publishToLiveKit?: boolean }` | No | Default `false`. When `true`, `startCamera()` publishes the track to the LiveKit room. Can be overridden per-call via `startCamera({ publishToLiveKit: true })`. |
 | `fitMode` | `'contain' \| 'cover' \| 'fill' \| 'none'` |
 | `debug` | Inherited from `BaseOptions`. |
@@ -299,14 +333,16 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | `input` | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` Default values for the playback side. |
 
-**Note**: `channelCount` is optional and defaults to `1`. `noiseSuppression`, `echoCancellation`, and `autoGainControl` default to `true` when not explicitly set.
+**Input precedence**: explicit top-level input fields override the same member in `constraints`; other standard constraint members are preserved and passed to `getUserMedia`. `sampleSize` is passed to the capture request, `bitDepth` is a deprecated alias used only when `sampleSize` is omitted, and `constraints.sampleSize` is the final fallback. `noiseSuppression`, `echoCancellation`, and `autoGainControl` default to `true` only when neither the top-level field nor `constraints` sets them, so an explicit `false` is not overwritten. Local PCM processing uses `channelCount` `1` when no numeric value is available.
+
+A successful capture request does not prove the device accepted every constraint. Read the actual browser-reported values from `getMicrophoneStats().settings`.
 
 ### 6.5 `performanceMonitor`
 
 | Field | Description |
 | :--- | :--- |
 | `enabled` | Defaults to `true`; set to `false` to disable built-in performance collection. |
-| `reporter` | `(metric: PerformanceMetricRecord) => void` Custom reporting callback. |
+| `reporter` | `(metric: PerformanceMetricRecord) => void`. **Inert: configuration is ignored, callbacks are never invoked; removed in 3.0.0.** |
 
 ### 6.6 `MicrophoneStats`
 
@@ -315,7 +351,13 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 | `bytesSent` | Number of bytes sent. |
 | `packetsSent` | Number of packets sent. |
 | `packetsLost` | Number of lost packets. |
-| `roundTripTime` | Round-trip time in milliseconds. |
+| `roundTripTime` | **Legacy:** raw LiveKit outbound RTP round-trip value in seconds, retained for compatibility. Unavailable values are `0`. Use `roundTripTimeMs` for a defined unit. |
+| `roundTripTimeMs` | Round-trip time in milliseconds, converted from the sender-stat seconds value. `null` when unavailable. |
+| `availability` | Per-field evidence flags: `bytesSent`, `packetsSent`, `packetsLost`, and `roundTripTimeMs`. A legacy `0` with `false` means unavailable; a `0` with `true` is a real zero. |
+| `settings` | Actual `MediaStreamTrack.getSettings()` values normalized to `MicrophoneTrackSettings`, or `null` when the browser cannot report them. |
+| `sampledAtMs` | Query timestamp from `performance.now()`. Each call re-reads sender stats and track settings; nothing is cached. |
+
+`MicrophoneTrackSettings` contains nullable `deviceId`, `groupId`, `sampleRate`, `channelCount`, `sampleSize`, `echoCancellation`, `noiseSuppression`, `autoGainControl`, and `voiceIsolation` values. `getMicrophoneStats()` still returns `null` when there is no active microphone, no sender report, or the sender-stat request fails; a settings read failure alone does not suppress statistics.
 
 ---
 
@@ -323,7 +365,11 @@ This chapter lists constructor parameters only. See Section 7 for the full Debug
 
 ### 7.1 Basic Debug and LiveKit Verbose
 
-`debug: true` and `debug: {}` enable SDK Debug logs only; only `debug: { verbose: true }` enables LiveKit JS SDK internal Debug logs. SDK and LiveKit loggers are runtime-global in the current page: each client creation applies its configuration; SDK logging returns to `ERROR` when `debug` is `false` or omitted, and LiveKit logging returns to `info` unless `verbose: true`. Disposing a client also restores both defaults. Therefore, the last created or disposed SDK client affects the log level of other SDK or LiveKit clients in the same page.
+Ordinary SDK Console logs are scoped to each Client: `debug` omitted or `false` defaults to `ERROR`, while `true` or an object (including `{}`) defaults to `DEBUG`. Creating or disposing another Client does not change that level.
+
+Explicit `Logger.setLevel()` calls immediately affect Clients already created; later Clients start with their own `debug` setting. `Logger.setPrefix()` sets a shared SDK Console prefix.
+
+`debug: { verbose: true }` enables LiveKit Debug logs. Within one SDK module copy, LiveKit stays at `debug` while any undisposed Client requests verbose, otherwise it uses `info`. Disconnect/reconnect retains that setting and `dispose()` releases it. LiveKit levels are global and may affect other LiveKit instances in the same page; separate SDK copies do not coordinate.
 
 ### 7.2 Periodic A/V Diagnostics (`debug.avSync`)
 
@@ -337,7 +383,13 @@ debug: {
 
 Background sampling waits up to 10 seconds for the first remote audio or video track accepted by the renderer-participant filter. On timeout, it stops for the current connection session and retains `remote-track-wait-timeout` for upload. This timeout does not affect manual `captureRemoteAvSyncDiagnostics()`.
 
-Offline evidence is returned by pages from `getAvSyncRawTelemetry(query?)`, not `[RTC remote-media]` Console output: the no-argument call returns at most the latest five minutes and 200 logs, while `range`, `pageSize`, and `page.nextCursor` retrieve further records. Log queries and fact-only summaries run in a Dedicated Worker; manual capture still reads current WebRTC stats on the browser main thread. `avSyncLogRetention` reports retained counts, storage errors, and drops. Room disconnect freezes the final session for paged queries; reconnect replaces it, while `dispose()` and failed connection attempts clear it.
+Offline evidence is returned by pages from `getAvSyncRawTelemetry(query?)`, not `[RTC remote-media]` Console output: the no-argument call returns at most the latest five minutes and 200 logs, while `range`, `pageSize`, and `page.nextCursor` retrieve further records. When the telemetry Worker is available, log queries and fact-only summaries run in a Dedicated Worker; if no Worker exists at creation, they use the memory fallback. Manual capture still reads current WebRTC stats on the browser main thread. `avSyncLogRetention` reports retained counts, storage errors, and drops. Room disconnect freezes the final session for paged queries; reconnect replaces it, while `dispose()` and failed connection attempts clear it.
+
+Pagination contract: time endpoints are inclusive. `recent.durationMs` must be positive and finite; wall-clock endpoints must be finite with `fromMs <= toMs`. `pageSize` must be an integer from 1 to 1000 (default 200). Invalid parameters, empty/malformed cursors, cross-session cursors, and cursor/range conflicts reject with `SDKError`, code `RTC_INVALID_AV_SYNC_TELEMETRY_QUERY`. Parameters are validated even without a current or frozen session.
+
+The first-page cursor fixes the session, range and sequence ceiling; continuation may change pageSize. `hasMore: true` always includes a usable `nextCursor`; the final page returns false/null. `summary` aggregates all available logs in the complete query window under that ceiling, independently of the current page. `includeSummary: false` returns null and skips aggregation. `currentDiagnosis` is the current call's diagnosis context. `availableFrom/ToWallClockMs` describe retained session evidence under the ceiling; `truncated` reflects retention eviction overlapping the window, not ordinary paging. Later logs cannot enter old-cursor pages or summaries, but retention eviction can reduce evidence on later pages; the SDK does not retain a server-style window snapshot.
+
+The telemetry Worker and fallback when no Worker exists at creation share this pagination algorithm. LocalStore owns the retention budget and eviction of sealed segments; the Worker queries an incremental memory mirror of retained segments and the open tail, without waiting for persistence or rereading IndexedDB. Evidence with pending or failed writes can remain in the mirror; storage status reflects what was known when the request was captured and does not imply pending writes succeeded. Fallback queries only the memory evidence it actually owns, without equivalent persistent historical coverage. Runtime raw telemetry or evidence query failures propagate and do not trigger automatic fallback; analysis returns `insufficient_evidence` when the analysis Worker is unavailable or mirror evidence is incomplete. This telemetry Worker is separate from the experimental frame metadata worker in Section 7.4.
 
 ### 7.3 Automatic Video-Stall Alerts
 
@@ -411,29 +463,78 @@ runtimeClient.uninstallPlugin(plugin.id);
 
 Do not include the same plugin ID in both `plugins` and `installPlugin()` on the same instance. Check the runtime installation result. `uninstallPlugin()` returns `true` when it removed an active plugin and `false` when that ID is not active in the instance.
 
+#### Observer Handoff During Disposal
+
+Since **2.6.0**, plugins can set `terminalObserverDelivery: 'sync-before-dispose'` to synchronously receive pending runnable Observer callbacks before Client disposal, including session-end logs already produced. Applications keep calling `client.dispose()`; no extra handling is needed without a plugin.
+
+The SDK does not await uploads or persistence. A plugin must receive/enqueue data before the callback's first `await`, then use its own upload resources from `dispose()` for subsequent work; it cannot rely on disposed SDK services. This option does not change normal callback delivery or explicit `uninstallPlugin()` behavior and does not guarantee successful upload after page exit.
+
+Plugins using this capability must require SDK **2.6.0** or later as their peer dependency. Plugin API stays at `1`. See the [Plugin Integration Guide](./SDK_Plugin_Integration_Guide.md#51-terminal-observer-handoff) for the full contract and example.
+
 #### Currently Supported Plugin Packages
 
 | Plugin package | Purpose | Status |
 | --- | --- | --- |
 | `@sanseng/liveavatar-js-sdk-markdownrender` | Markdown rendering; see the plugin package documentation for exports, configuration and compatibility. | Listed plugin package |
-| `@sanseng/liveavatar-js-sdk-skywalking` | Published SkyWalking integration for A/V Sync diagnostics and SDK errors. Its published release does not consume the v2.4.0 first-frame Observer or log automatically. | Requires a separate compatible plugin release |
+| `@sanseng/liveavatar-js-sdk-skywalking` | SkyWalking integration; reviewed 1.1.0 uses legacy SDK contracts. See the plugin documentation for upload coverage. | Separate migration required for unified-session contracts |
 
-A later SkyWalking plugin release must register `SDK_PERFORMANCE_METRICS_V1` and/or `performance.first-frame` before it can report setPerformance or reportFrameErrors. The SDK does not own that plugin authorization, queue, retry, or delivery.
+SkyWalking 1.1.0 does not consume the unified-session contracts added in 2.7.0. Migrate the plugin and collector separately. The SDK does not own plugin authorization, queueing, retries, or delivery.
 
 ---
 
+### 7.6 Operational Logs and Diagnostic Evidence
+
+The SDK does not upload logs automatically. Applications use plugins to receive and send records to their own platforms; upgrading the SDK does not automatically change an existing plugin's uploads.
+
+| Plugin capability | Purpose | Minimum SDK version |
+| --- | --- | --- |
+| `SDK_OPERATIONAL_LOGS_V1` | Continue receiving existing operational logs | Existing plugin compatibility range |
+| `SDK_OPERATIONAL_LOGS_V2` | Receive `SDKLogRecordV2` with operation outcomes, error reasons, and session correlation | `2.6.0` |
+| `SDK_AVSYNC_DIAGNOSTICS_V2` | Read retained A/V evidence by page using `getAvSyncLogEvidence(query?)` | `2.6.0` |
+| `SDK_OPERATIONAL_LOGS_V3` | Log V3 with unified application session correlation (Section 5.2) | `2.7.0` |
+| `SDK_PERFORMANCE_METRIC_V2` / `SDK_PERFORMANCE_METRICS_V2` | Individual/batch performance measurements with application session ownership | `2.7.0` |
+| `SDK_AVSYNC_ALERTS_V2` / `SDK_AVSYNC_ANALYSES_V2` / `SDK_AVSYNC_SESSION_ENDED_V2` | A/V Observers separating application and media diagnostics identities | `2.7.0` |
+| `SDK_AVSYNC_DIAGNOSTICS_V3` | A/V snapshots, telemetry, analysis, and log evidence with unified correlation | `2.7.0` |
+
+V1 remains available. Choose one real-time log version for the same purpose to avoid duplicate uploads. In V2, use `clientInstanceId + monitoringSessionId` to correlate monitoring sessions. `serverSessionId` identifies the server session and `avsyncSessionId` identifies the A/V diagnostics session; keep them distinct.
+
+Plugins call `getAvSyncLogEvidence()` on the service obtained through `registrar.consume(SDK_AVSYNC_DIAGNOSTICS_V2)`. It does not start extra sampling; enable `debug.avSync` in advance for continuous evidence. The first query returns retained evidence without warm-up or repeated calls. Query parameters and pagination match `getAvSyncRawTelemetry()`. See the [Plugin Integration Guide](./SDK_Plugin_Integration_Guide.md#41b-structured-logs-and-av-sync-evidence-v2) for an example.
+
+#### Compact Log V3 records
+
+Cross-instance diagnostic IDs use unpadded Base64URL encoding: `clientInstanceId` is `c_` plus 22 characters, `monitoringSessionId` is `m_` plus 22, and the local-evidence page lifecycle ID is `p_` plus 22. The SDK first encodes all 16 bytes of `crypto.randomUUID()`; if unavailable or failing, it obtains 16 bytes from `crypto.getRandomValues()`. It neither truncates nor hashes the UUID, retaining its random bits and collision resistance. If both cryptographic sources are unavailable, a type prefix, base-36 time, module-local counter and random string provide a compatibility fallback; that path has no fixed 24-character length or cryptographic uniqueness guarantee. Random IDs do not promise mathematically impossible collisions. Treat all these IDs as opaque strings rather than parsing their prefix or length.
+
+Short cross-instance IDs apply across log, performance and diagnostic versions, so derived IDs containing the Client ID also become shorter. Existing fields, composition rules and uniqueness scopes remain, and historical records are not rewritten. Caller, backend, browser and LiveKit IDs, and the automatic application `sessionId` rules prefixed with `sdk-`, are unchanged. `failureId` and `alertId` retain their full Client-qualified identity for independent consumers; do not derive them from short operation IDs.
+
+Log V3 retains `schema: 'sdk.log'`, `schemaVersion: 3`, `SDK_OPERATIONAL_LOGS_V3` major 3. This format was introduced in SDK 2.7.0; the current SDK is 2.8.0; legacy V1/V2 fields and meanings stay intact.
+
+Since 2.8.0, browser failures classified as `permission` from structured `NotAllowedError` / `SecurityError` evidence use `warn` instead of `error` in V1 `sdk.error` / `operation.failed` and V2/V3 `sdk.failure`; existing lower levels remain. Permission unavailability does not establish user refusal. HTTP 401/403, LiveKit `NotAllowed`, other backend/device failures and unknown errors retain their rules, as do precondition and confirmed-cancellation classification precedence. Failure records, codes, operation outcomes, public `sdk:error` events and Promise rejections remain; error-only consumers must accept warn or count failure events.
+
+Each record contains `clientInstanceId`, `stream: 'operational' | 'avsync'`, `sequence`, Unix wall-clock `occurredAtMs`, `level`, `module`, and `event`; optional fields are `sessionId`, `sessionEpoch`, `avsyncSessionId`, `observedAtMs`, `trigger`, `operation`, top-level `failureId`, `error`, `correlation`, `snapshot`, and `data`. V3 omits top-level `eventId`, `streamId`, `clockId`, `serverSessionId`, and `failureRef`, and does not repeat `failureId` inside `error`. Internal Auth server identity and the Auth getter retain their behavior.
+
+- Deduplicate operational records by `[clientInstanceId, 'operational', sequence]`; the sequence spans the Client lifetime, including separate `sdk.failure` records. Deduplicate A/V evidence by `[clientInstanceId, 'avsync', avsyncSessionId ?? null, sequence]`, retaining each media diagnostic source's sequence. Order within one space, never across spaces. Application `sessionId`/`sessionEpoch` are excluded from record identity, so Auth binding does not relabel records. Client plus epoch still isolates lifecycle ownership.
+- `occurredAtMs` is the fact's Unix wall-clock time in milliseconds. When available, `observedAtMs` is milliseconds from the main Client's monotonic clock: operational records read it at publication, including failures rather than reusing failure capture time; A/V records retain the source observation. The clock origin is implicit in the contract. Do not subtract different clock domains or interpret publication intervals as business duration; use existing measurement fields for durations.
+- One source failure has one `sdk.failure` containing complete `error` details. Its top-level `failureId` uses the same source identity as V2. Related operation/flow results carry that same top-level `failureId`, without eventId joins or repeated error details. Optional `error.operation`, `error.phase`, and `error.protocolEvent` retain failure-site information that operation does not express.
+- `snapshot` contains connection state only: SDK state, HTTP/RTC flags, Room presence/state, whether it connected, and last disconnect. It does not repeat source, time, identity, or cause; error evidence belongs in `error.evidence`.
+- V3 projects SDK-generated operations to decimal ordinals such as `o1`, `o2` and `o10`, consistently across `operationId`, `rootOperationId`, `parentOperationId` and both `relatedOperationId` locations. The complete operation join key is `[clientInstanceId, operationId]`; separate Clients can each emit `o1`. Source ordinals span the Client lifetime and do not reset on reconnect, configuration changes, Auth binding or plugin uninstall/reinstall. Internal source IDs and V1/V2 operation composition remain unchanged. Only SDK operation IDs matching the record's Client exactly are converted; other values are preserved. Operation joins do not replace the record deduplication keys above.
+- `operation.phase` is optional: omit started/finished or an event-name duplicate, while retaining real request/response/init phases. A root operation omits its own `rootOperationId`; children retain the root ID. If operation and correlation have the same `relatedOperationId`, keep only correlation; preserve both when they differ.
+- `trigger` is optional: omit unknown/default SDK event entries; retain real API, backend, browser, and independently meaningful SDK entries. `correlation.mediaStreamId` identifies a browser MediaStream, replacing the old V2 correlation name `streamId`.
+- Auth `session.id-bound` carries the new top-level `sessionId` and only `previousSessionId` in `data`. Earlier facts are not rewritten. Evidence pages remain `sdk.log-evidence`, version 3, with compact V3 `records`; windows, cursors, first-query behavior, measurement names, units, and 0/false/null retain their meanings.
+
+These compaction rules apply only to Log V3 and its evidence records. They do not remove fields from performance V2, AV Sync alerts V2, or raw telemetry. Legacy Log V2 retains its eventId, streamId, clockId, serverSessionId, and failureRef semantics. SkyWalking 1.1.0 still uses legacy contracts and does not automatically upload V3.
+
 ## 8. Core API Methods
 
-All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except for the constructor, `setAuthToken`, and `updateConnectionConfig`, most media and session APIs require a **successful `connect()`** (verified internally via `sessionState.isConnected`).
+The following are public `SDKClient` methods. Most media and session APIs require a **successful `connect()`**; authentication and connection configuration can be set before connecting.
 
 ### 8.1 Connection & Lifecycle
 
 | Method | Description |
 | :--- | :--- |
 | `preConnect(): Promise<boolean>` | Pre-fetches and caches connection config (TTL is ~60s, see `PRECONNECT_CACHE_DURATION_MS`). Throws on failure. |
-| `connect(): Promise<void>` | Establishes the Coordinator, Domain Controllers, and LiveKit connection. Calls pre-connect internally if no valid cache exists. |
+| `connect(): Promise<void>` | Obtains connection configuration when needed and connects to the LiveKit room. |
 | `disconnect(): Promise<void>` | Stops capture, disconnects LiveKit, and cleans up HTTP sessions. The instance can still be used for `connect()` or `reconnect()`. |
-| `reconnect(): Promise<ConnectionSnapshot>` | Manual reconnection: `disconnect()` is called first, then config is refreshed based on mode before calling `connect()`. Returns a snapshot if reconnection is not allowed. |
+| `reconnect(): Promise<ConnectionSnapshot>` | Re-establishes the connection when allowed and returns the snapshot captured at invocation. When disallowed, skips reconnection and returns the current snapshot. Read the current `connectionSnapshot` or connection events afterward. |
 | `installPlugin(plugin): SDKPluginInstallResult` | Atomically installs a Plugin API v1 plugin. Rejection is returned as data and does not affect the SDK lifecycle. |
 | `uninstallPlugin(pluginId: string): boolean` | Atomically removes contributions, invalidates old handles, and calls plugin dispose. |
 | `dispose(): void` | Releases all resources. The instance **must not** be used after this call. |
@@ -444,25 +545,27 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 
 | Method | Description |
 | :--- | :--- |
-| `setAuthToken(token: string): void` | Sets the auth token; used by HTTP and Config components in **Auth Mode**. |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`. **Does not affect the current session**; takes effect during the next `preConnect()` / `connect()` or `reconnect()` via `replaceDirectConfig`. |
+| `setAuthToken(token: string): void` | Sets the token used for subsequent Auth requests; does not invalidate cached room configuration. |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **Direct Mode only**. Validates and stages `sfuUrl` / `userToken`; since 2.7.0 also accepts optional `sessionId` (see 5.2). **Does not affect the current session**; takes effect during the next `preConnect()` / `connect()` or `reconnect()`. |
 
 ### 8.3 Media
 
 | Method | Description |
 | :--- | :--- |
 | `setRenderFitMode(mode: RenderFitMode): void` | Updates the video object-fit mode. |
-| `videoLayout` | Read-only frozen copy of the backend layout selected at client construction, or `undefined` for legacy callers. |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates green-screen options only in a connected plain/legacy session. It cannot replace or reveal a `rgb-alpha-vertical-v1` packed presentation. |
-| `startAudioCapture(): Promise<void>` | Opens the microphone and publishes to LiveKit. |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | Updates green-screen options in the active connected session; changes are not retained across reconnects. |
+| `startAudioCapture(): Promise<void>` | Enables and publishes the microphone through LiveKit; does not automatically enable RMS, PCM, or local visualization. |
 | `stopAudioCapture(): Promise<void>` | Stops microphone publishing. |
 | `setVolume(volume: number): void` | Sets playback volume (`0` to `1`). |
-| `getVolume(): number` | Gets current playback volume. |
-| `mute()` / `unmute()` | Controls playback muting. |
+| `getVolume(): number` | Gets playback volume; in the current 2.8.0 implementation, a zero underlying volume returns `1`. Do not use it to determine real zero volume or mute state. |
+| `mute()` / `unmute()` | Controls playback muting without affecting remote audio analysis. |
 | `get isMuted` | Returns whether playback is muted. |
 | `get isAudioCapturing` | Returns whether the microphone is actively publishing. |
-| `getMicrophoneAudioLevel(): number \| null` | Gets the latest 4096-sample local PCM frame's linear RMS level (0.0-1.0); returns `0` before the first frame and `null` without an active microphone. |
-| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | Gets microphone transmission statistics. |
+| `startMicLevel(): Promise<void>` | Explicitly enables RMS monitoring. May wait for a later microphone track; resolves with a real sampling window and never starts capture. |
+| `getMicLevel(): number \| null` | Synchronously reads linear RMS (0..1). Disabled monitoring, no active microphone, preparation, or unavailability returns `null`; real silence is `0`. |
+| `stopMicLevel(): void` | Clears RMS demand and cancels pending level startup without affecting publishing, PCM, or visualization. |
+| `getMicrophoneAudioLevel(): number \| null` | **Deprecated; removed in 3.x.** Compatible forwarding alias of `getMicLevel()`, including return and error behavior. |
+| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | Gets microphone transmission statistics and actual track settings. Each call re-samples. `availability` distinguishes missing values from real zero; use `roundTripTimeMs` for milliseconds. Returns `null` without an active microphone, a sender report, or on sender-stat failure. |
 | `isMicrophoneSilent(): Promise<boolean \| null>` | Detects if the microphone is sending silence. |
 | `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | Opens the camera; optionally publishes to LiveKit room. Defaults to local preview only. |
 | `stopCamera(): void` | Stops the camera. |
@@ -470,12 +573,56 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | `getCameraTrack(): MediaStreamTrack \| null` | Returns the local media track. |
 | `attachCameraTo(videoElement: HTMLVideoElement): void` | Binds the local camera stream to a `<video>` element. |
 | `detachCameraFrom(videoElement: HTMLVideoElement): void` | Detaches the camera track from a video element. |
-| `startAnalyserEmission(): void` | Starts emitting remote audio analyser data (~60fps) via `media:audio:analyserData`. If no remote audio track has arrived yet, the analyser chain is automatically deferred and will begin emitting once the track is subscribed. |
-| `stopAnalyserEmission(): void` | Stops remote audio analyser emission and releases AudioContext. |
+| `startAnalyserEmission(): void` | Starts emitting remote audio analyser data (~60fps) via `media:audio:analyserData`. If no remote audio track has arrived yet, the analyser chain is automatically deferred and will begin emitting once the track is subscribed. Playback muting does not affect analyser data; see "Remote Playback Muting and Audio Visualization" below. |
+| `stopAnalyserEmission(): void` | Stops remote audio analyser data emission. |
 | `restartAnalyserEmission(): void` | Restarts the remote audio analyser chain. |
-| `startLocalAnalyserEmission(): void` | Starts emitting local microphone analyser data via `media:audio:localAnalyserData`. If `startAudioCapture()` has not been called yet, the analyser chain is automatically deferred and will begin emitting once the microphone stream becomes available (auto-retried via 100ms polling, max 10s timeout). |
+| `startLocalAnalyserEmission(): void` | Starts emitting local microphone analyser data via `media:audio:localAnalyserData`. Calls before capture take effect after microphone startup; stopping or restarting visualization does not affect level queries or audio-frame subscriptions. |
 | `stopLocalAnalyserEmission(): void` | Stops local microphone analyser emission. |
 | `restartLocalAnalyserEmission(): void` | Restarts the local microphone analyser chain. |
+
+### Remote Playback Muting and Audio Visualization
+
+Calling `client.mute()` only mutes remote audio playback; it does not stop remote audio analysis. While the remote audio track is being received normally and `startAnalyserEmission()` is enabled, `media:audio:analyserData` continues to provide analysis data. Remote audio levels, frequency spectra, and waveforms can therefore continue to display and change with the audio signal actually received.
+
+These visualizations reflect the received audio signal, not whether the speakers are producing sound. To stop emitting analysis data, call `stopAnalyserEmission()`.
+
+### Local Microphone Level and Startup Results
+
+Call `startAudioCapture()` from a user gesture. It waits only for microphone enablement and LiveKit publication, so the enabled icon can update immediately after success. Capture and level getters do not automatically enable an SDK-owned analysis graph. RMS, PCM, and local visualization are independent consumers enabled by `startMicLevel()`, actual `media:audio:frameData` subscriptions, and `startLocalAnalyserEmission()`, respectively.
+
+```ts
+await client.startAudioCapture();
+console.log('Microphone enabled', client.isAudioCapturing);
+
+// Enable only when the application needs levels; the first read after success is real.
+try {
+  await client.startMicLevel();
+  console.log(client.getMicLevel()); // 0 means real silence, never a placeholder.
+} catch (error) {
+  // AbortError means cancelled waiting; sampling failure must not stop publication.
+  console.warn('Level monitoring did not become ready', error);
+}
+
+client.stopMicLevel(); // Removes only RMS demand; microphone publishing continues.
+```
+
+`startMicLevel()` may register demand before capture and wait for a later track, but it never requests microphone permission or starts publishing. Without a track it creates no sampling resources or readiness timer. Start capture independently; do not await monitoring before triggering capture. Once a track is available, the SDK prepares a real window within approximately 2 seconds without requiring speech, warm-up queries, sleeps, or repeated startup. Repeated calls join the current preparation; an already ready monitor completes immediately.
+
+`getMicLevel()` is synchronous and read-only; it never initializes or recovers sampling. Disabled monitoring, no active microphone, preparation, or unavailability returns `null`; preparation alone does not report an error. The first read after successful `startMicLevel()` returns real RMS, including real silence (`0`). The forwarding `getMicrophoneAudioLevel()` alias is deprecated and will be removed in 3.x. Migration requires explicit monitoring startup as well as the shorter getter name. Existing connected/disposed checks remain.
+
+Within each SDK Client, the three local microphone consumers share one demand-created `AudioContext` and input source, with separate branches. This context is not shared with other Clients, remote analysis, or LiveKit-owned contexts. Adding a consumer ensures shared resources exist; removing it releases only its branch. Removing the last consumer releases the graph, timers, and recovery listeners. Pending monitoring is also a consumer. PCM and visualization do not depend on RMS being enabled or ready, and analysis cannot determine publication success. With no consumers the SDK creates no local analysis graph. LiveKit's native one-time silence detection when creating a track remains; this is not a guarantee of zero temporary AudioContexts throughout the dependency.
+
+A level preparation timeout or fault rejects `startMicLevel()` with `AUDIO_INPUT_MONITORING_UNAVAILABLE` and uses existing nonfatal diagnostic reporting, deduplicated per continuous fault. An RMS branch fault does not stop other healthy branches; a shared context fault requires shared recovery. Disabling analysis does not affect successful microphone publishing. Permission/publication failures still reject `startAudioCapture()`. Drive the icon from startup and `isAudioCapturing`, never from `null` or monitoring errors.
+
+### Microphone Stop, Cancellation, and Sampling Recovery
+
+- While permission acquisition or publication is pending, `stopAudioCapture()`, `disconnect()`, and `dispose()` immediately revoke the old startup operation's authority. A cancelled startup Promise resolves normally, without a microphone-started event or an enablement guarantee. When startup races with stop, use the current `isAudioCapturing` state.
+- The browser permission dialog may remain open. The SDK does not wait for that request; a track returned later is stopped without publication. A track whose publication is pending is stopped locally first, and any late publication is cleaned up against that old track without affecting a replacement microphone.
+- Normal stop of an already published microphone still waits for unpublication. Unpublication failures still reject the Promise, while local track stopping is attempted independently. One connection-cleanup failure does not skip the remaining release steps. `dispose(): void` synchronously revokes authority and stops known capture resources; remaining asynchronous cleanup runs in the background. It does not guarantee completed network, browser, or operating-system device release.
+- Analysis preparation/recovery requires explicit consumer demand and an available track. Suspension first resumes the existing Context; shared graph faults receive at most one automatic rebuild per continuous fault, with an approximately 2-second attempt deadline. Persistent failure stops retrying; a later trusted interaction or hidden-to-visible transition can grant a new bounded attempt, at most once per second. Branch faults do not rebuild healthy branches, and getters never trigger recovery.
+- `stopMicLevel()` clears RMS intent and rejects pending startup with `AbortError`. Capture stop, disconnect, track end, or replacement also cancels current waiting and releases the old graph, but retains enabled RMS intent for a later application-triggered capture; disposal clears intent. Rejected Promises do not revive. PCM subscriptions and visualization retain their own lifecycles. Diagnostic recovery never starts capture or switches devices. Publication and enablement do not prove effective audio transmission.
+
+If macOS continues showing active microphone use after Chrome exits, record browser/system versions, the actually loaded SDK/LiveKit versions, device, remaining processes, and indicator duration. Check browser AudioContext device/rendering errors, SDK sampling, RTC publication, and operating-system audio sessions separately. The indicator alone does not establish an SDK leak, and unit tests alone do not establish a device fix.
 
 ### 8.4 Session
 
@@ -490,11 +637,11 @@ All methods below are defined in `SDKClient` (`src/client/SDKClient.ts`). Except
 | :--- | :--- |
 | `get isConnected(): boolean` | Whether the session is currently connected. |
 | `get connectionSnapshot(): ConnectionSnapshot` | Synchronous read-only snapshot: `http.connected`, `rtc.connected`, `rtc.hasVideoTrack`, `overall.state`. |
-| `get sessionId(): string \| undefined` | Server-assigned session ID. **Auth mode only**; returns `undefined` in direct mode and logs a debug message. |
-| `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | Sets or updates the performance metric reporting callback. |
+| `get sessionId(): string \| undefined` | Auth keeps its server-ID contract. Since 2.7.0, Direct returns the caller ID or automatic ID prefixed with `sdk-` after the first successful configuration resolution/application; undefined beforehand. Staging does not change it (see 5.2). |
+| `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | **Inert; removed in 3.0.0.** Ignores the callback, creates no detector, and preserves the disposal check. |
 | `getPlaybackStatus(): Promise<PlaybackStatus>` | Current connection, media-receiving ICE/age-qualified RTT, per-track receiver metrics, completed output FPS and SDK-defined stalls. Supports single tracks; core metrics do not require debug. |
 | `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>` | Actively captures remote audio/video receiver statistics and this connection's track lifecycle nodes; available without debug configuration. |
-| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>` | Reads current bounded context plus one `avSyncLogs` page. The default is the latest five minutes and 200 logs; use `range`, `pageSize`, and `page.nextCursor` to paginate. A fact-only window summary is enabled by default and can be disabled with `includeSummary: false`; log queries and aggregation run in a Dedicated Worker. |
+| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>` | Reads current bounded context plus one `avSyncLogs` page. The default is the latest five minutes and 200 logs; use `range`, `pageSize`, and `page.nextCursor` to paginate. A fact-only window summary is enabled by default and can be disabled with `includeSummary: false`; log queries and aggregation run in a Dedicated Worker when available, or use the memory fallback when no Worker exists at creation. |
 | `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | Asynchronously analyzes the complete retained window in the telemetry Worker. The caller controls polling cadence; the report exposes stable `status`, `finding`, `features`, `layers`, and bounded limitations, and ordinary evidence gaps do not reject the promise. Automatic video-stall notification does not depend on calling this method. |
 | `get events(): PublicEmitterAPI` | Accesses the event emitter (supports `on`, `off`, `once` only). |
 
@@ -517,6 +664,8 @@ Available in **2.5.0**. Use `getPlaybackStatus()` for a connection/playback pane
 | `captureRemoteAvSyncDiagnostics()` | One immediate paired A/V receiver snapshot, lifecycle and TimeSync context                            | Yes                 | Callable without debug; continuous TimeSync evidence needs A/V diagnostics                                       |
 | `getAvSyncRawTelemetry(query?)`    | Export retained evidence and retrieve a page of diagnostic logs                                       | No                  | Enable `debug.avSync` in advance for continuous receiver/frame evidence; frame metadata requires explicit opt-in |
 | `getAvSyncAnalysis(query?)`        | Analyze a retained time window for receive/decode/render/binding/playback issues                      | No                  | Needs sufficient retained evidence and the analysis Worker; otherwise reports `insufficient_evidence`            |
+
+For retained direct APIs and legacy AV Sync contracts (new plugin contracts: see 5.2), when a monitoring session exists, diagnostic snapshots, raw telemetry, analysis reports, alerts, session-ended events, and retained diagnostic logs include `clientInstanceId` and `monitoringSessionId`. Diagnostics `sessionId` identifies one media diagnostics session; old records and delayed analysis retain their original correlation. The `avsync.session.started` log links monitoring and diagnostics sessions through `correlation.avsyncSessionId`.
 
 The APIs share some receiver metrics but have separate roles. Playback sampling supports single audio/video tracks and keeps its interval baseline independent of A/V diagnostic sampling. Immediate diagnostic snapshots organize complete audio/video pairs. Raw telemetry and analysis cannot reconstruct facts that were never collected. Only `avSyncLogs` is paginated; other raw telemetry arrays are bounded context, not necessarily filtered to the same query window. Disconnect preserves frozen diagnostic evidence for querying; reconnect replaces the session, and dispose clears it.
 
@@ -623,11 +772,11 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
   - **Legacy fields** `livekit` / `http` / `all` are **deprecated** (kept for backward compatibility); on `sdk:disconnected` they carry the inverted semantic (`true` after disconnect). Will be removed in the next major version.
   - `allConnected` (and legacy `all`) are mode-aware: `auth` mode is `livekitConnected && httpConnected`; `direct` mode is `livekitConnected`.
   - `reason` is forwarded from the inner `inner:sdk:disconnected.reason`.
-- **Description**: Can be cross-referenced with `connectionSnapshot` for validation. To check "fully disconnected → ready to reconnect", use `payload.allConnected === false`.
+- **Description**: `allConnected === false` means the mode's overall connection condition is not met; it does not prove all channels are disconnected or manual reconnect is permitted. Check `connectionSnapshot` and current state after reconnect.
 
 ### `sdk:error`
 
-- **Trigger**: Dispatched when an internal error is mapped to a secure external payload.
+- **Trigger**: When the SDK reports an error or an unavailable capability. Handle it by `code`; `AUDIO_INPUT_MONITORING_UNAVAILABLE` only means local sampling is unavailable, not that microphone publishing failed.
 - **Payload**: `{ message: string; code: string }` (`code` is the string value of `ErrorCode`).
 
 ### `sdk:pluginFault`
@@ -652,14 +801,14 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 
 ### `sdk:participant:disconnected`
 
-- **Trigger**: When a remote participant disconnects from the LiveKit room.
+- **Trigger**: When a remote participant whose identity starts with `renderer_` disconnects from the LiveKit room.
 - **Payload**: `{ participantId: string }`.
 
 **Video**
 
 | Event | Trigger | Payload |
 | :--- | :--- | :--- |
-| `media:video:available` | Remote video is available (first frame semantics driven by RTC layer). | `undefined` |
+| `media:video:available` | Remote video playback availability signal; does not guarantee a physical first frame has been displayed. | `undefined` |
 | `media:video:unavailable` | Remote video is no longer available. | `undefined` |
 | `media:video:trackAdded` | Video track added. | `undefined` (de-duplication handled internally). |
 | `media:video:trackRemoved` | Video track removed. | `undefined` |
@@ -679,7 +828,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | :--- | :--- | :--- |
 | `media:audio:captureStarted` | Local input capture started. | `undefined` |
 | `media:audio:captureStopped` | Local input capture stopped. | `undefined` |
-| `media:audio:frameData` | Raw audio frame data with sample rate. | `{ data: Float32Array; sampleRate: number }` |
+| `media:audio:frameData` | Raw audio frame data with sample rate; processing is active only while public subscribers exist. | `{ data: Float32Array; sampleRate: number }` |
 
 **Local Microphone Analyser**
 
@@ -714,7 +863,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 | `conversation:answer:chunk` | Answer text chunk received. | `{ questionId; rawDelta; rawText; representations; isComplete }`; deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | Single turn answer completed. | `{ questionId; rawText; representations }`; deprecated `fullAnswer === rawText` |
 
-`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.5.0 without runtime warnings and can be removed only in a future major release.
+`representations` contains JSON-safe projections ordered by successful plugin installation and setup registration. Equal `mediaType` values do not overwrite each other. New code should use only `rawDelta` / `rawText`. Legacy fields remain in 2.8.0 without runtime warnings and can be removed only in a future major release.
 
 **Session**
 
@@ -727,7 +876,7 @@ Events are subscribed to via `client.events.on(eventName, listener)`. Only the e
 ## 10. Full Usage Example
 
 ```ts
-import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
+import { createClient, SDK_PERFORMANCE_METRIC_V1, VERSION } from '@sanseng/liveavatar-js-sdk';
 
 console.log('SDK version:', VERSION);
 
@@ -742,9 +891,16 @@ async function main() {
     },
     http: { baseURL: 'https://your-api.example.com/s2/aigc/api/vih_dispatcher' },
     video: { containerElement: container, fitMode: 'contain' },
-    performanceMonitor: {
-      reporter: (m: PerformanceMetricRecord) => console.log('[perf]', m.metric, m.durationMs),
-    },
+    plugins: [{
+      id: 'performance-collector',
+      apiVersion: 1,
+      setup(registrar) {
+        registrar.observe(SDK_PERFORMANCE_METRIC_V1, {
+          id: 'individual-metrics',
+          handler: (metric) => console.log('[measurement]', metric.metric, metric.durationMs),
+        });
+      },
+    }],
   });
 
   client.setAuthToken('REPLACE_WITH_TOKEN_FROM_YOUR_BACKEND');
@@ -887,7 +1043,7 @@ This method is available only while `client.isConnected === true`. Its patch app
 
 ## 13. Error Codes
 
-The following are the string values for the `ErrorCode` enum (`src/errors/ErrorCodes.ts`), consistent with the `code` field in `sdk:error` and thrown `SDKError` objects.
+The following are string values from the internal `ErrorCode` enum, consistent with `sdk:error` and thrown `SDKError` objects. `ErrorCode` is not exported from the package root; check the public error object's string `code` instead.
 
 ### 13.1 HTTP & Control Plane
 
@@ -929,18 +1085,17 @@ The following are the string values for the `ErrorCode` enum (`src/errors/ErrorC
 | Code | Description & Recommendation |
 | :--- | :--- |
 | `AUDIO_CAPTURE_START_FAILED` | Mic start failed. Check user gestures, HTTPS, and permissions. |
+| `AUDIO_INPUT_MONITORING_UNAVAILABLE` | Local sampling or level measurement is unavailable; microphone publishing continues. Do not disconnect solely because of it. |
 | `AUDIO_CAPTURE_FAILED` | Capture interrupted. |
 | `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | Parameter mismatch with device or protocol. |
 | `AUDIO_CONTROLLER_NOT_AVAILABLE` | Audio controller not created or already released. |
-| `AUDIO_OUTPUT_DISABLED` | Thrown by `getAudioElement()` when `output.enabled === false`. |
+| `AUDIO_OUTPUT_DISABLED` | The internal output pipeline can report this when output is disabled. `getAudioElement()` is not a public `SDKClient` method. |
 
 ### 13.5 Video / Camera
 
 | Code | Description |
 | :--- | :--- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | Camera controller is unavailable. |
-| `VIDEO_LAYOUT_INVALID` | The explicit `videoLayout` is malformed or violates its declared dimension/alpha contract. Correct the backend metadata before creating the client. |
-| `VIDEO_COMPOSITION_FAILED` | WebGL transparent composition could not initialize, the decoded dimensions differed from the declared packed layout, texture upload failed, or the context was lost. The packed canvas is hidden and no raw-frame fallback is shown; inspect `sdk:error` and recreate the client if needed. |
 
 ### 13.6 Session & State Machine
 
@@ -973,7 +1128,13 @@ Enabled by default (`performanceMonitor.enabled !== false`). The metric names un
 | `text_send_to_audio_response_ms` | Time from sending text query to receiving the first audio response chunk. |
 | `no_speech_report_to_audio_response_ms` | Time from "no-speech" report to receiving the audio response. |
 
-Data structure: `PerformanceMetricRecord` contains `metric`, `durationMs`, `startedAt`, `endedAt`, optional `questionId`, and optional `attemptId` for first-frame metrics.
+Data structure: `PerformanceMetricRecord` contains `metric`, `durationMs`, `startedAt`, `endedAt`, optional `questionId`, and optional `attemptId` for first-frame metrics. When a monitoring session exists, it also contains `clientInstanceId` and `monitoringSessionId`; delayed results retain the snapshot captured when measurement started.
+
+For connection stages, connection failure/first-frame timeout, text responses, and text-to-audio responses, `durationMs` uses elapsed `performance.now()` time. `startedAt` is the Unix timestamp sampled at measurement start, and `endedAt = startedAt + durationMs`. System clock jumps cannot change these durations or reverse timestamps within a record. Fractional milliseconds are retained; use `durationMs` for elapsed time.
+
+These timestamps describe a measurement timeline anchored at its start. After a system clock adjustment, `endedAt` may differ from `Date.now()` at completion; it is not an independently sampled completion wall-clock fact. Separate measurements take fresh anchors and need not remain globally ordered. A successful first-frame batch reuses the first-frame metric endpoint. Operational Log occurrence timestamps retain their existing wall-clock semantics.
+
+The legacy `no_speech_report_to_audio_response_ms` still uses the event-provided wall-clock start and wall-clock subtraction, so it remains affected by system clock adjustment. No production emitter or monotonic origin has been identified; this fix excludes that metric and does not guarantee its availability in normal sessions.
 
 ### 14.1a Segmented First-Frame Timeline
 
@@ -995,30 +1156,37 @@ After RTC connected, the SDK starts a 10-second first-frame timer. loadeddata, c
 
 ### 14.1b Terminal Batch and Plugin Inputs
 
-Every successful, failed, or timed-out attempt produces one immutable SDKPerformanceMetricsReport. Its schema is sdk.performance-metrics, schemaVersion is 1, and it contains attemptId, outcome, startedAt, endedAt, and metrics for present stages only. The SDK package root exports the detached SDK_PERFORMANCE_METRICS_V1 Observer token. Observers receive a deep-cloned frozen snapshot; the SDK does not await handlers, and a plugin throw, rejection, or timeout cannot change connection or media behavior.
+Every successful, failed, or timed-out attempt produces one immutable SDKPerformanceMetricsReport. Its schema is sdk.performance-metrics, schemaVersion is 1, and it contains attemptId, optional clientInstanceId/monitoringSessionId, outcome, startedAt, endedAt, and metrics for present stages only. The SDK package root exports the detached SDK_PERFORMANCE_METRICS_V1 Observer token. Observers receive a deep-cloned frozen snapshot; the SDK does not await handlers, and a plugin throw, rejection, or timeout cannot change connection or media behavior.
 
-The SDK also emits a sanitized Operational Log with category media and event performance.first-frame. Its correlation contains only attemptId; attributes contain only outcome, renderMode, timeoutAfterRtcMs for a timeout, and sparse numeric nodes. It excludes URLs, tokens, connection configuration, room/track/participant identifiers, text, raw DataChannel data, media frames, DOM/LiveKit objects, Error, message, and stack. This SDK release does not upload automatically. A later SkyWalking or other plugin release must register the observer or match the log, then owns setPerformance, reportFrameErrors, authorization, retries, and delivery.
+The SDK also emits a sanitized Operational Log with category media and event performance.first-frame. Its top-level envelope carries the monitoring correlation; its correlation contains only attemptId. Attributes contain only outcome, renderMode, timeoutAfterRtcMs for a timeout, and sparse numeric nodes. It excludes URLs, tokens, connection configuration, room/track/participant identifiers, text, raw DataChannel data, media frames, DOM/LiveKit objects, Error, message, and stack. This SDK release does not upload automatically. A plugin must register the observer or match the log and owns setPerformance, reportFrameErrors, authorization, retries, and delivery; SkyWalking 1.1.0 remains on legacy contracts.
 
-### 14.2 Custom Reporting
+### 14.2 Structured Measurements and Plugin Integration
+
+The SDK provides performance measurements; plugins receive and upload them. `setPerformanceMetricReporter()`, `PerformanceMonitorOptions.reporter`, and `PerformanceMetricReporter` retain their public signatures only, now have no effect, and will be **removed in 3.0.0**. Callbacks are never invoked and default `[performance-metric]` Console output is removed. This explicitly changes the old reporter behavior. `performanceMonitor.enabled` still controls performance measurement and defaults to enabled.
+
+Plugins consume individual `PerformanceMetricRecord` measurements through `SDK_PERFORMANCE_METRIC_V1` (identity `performance.metric`, major 1), including stage and conversation response timings without an additional envelope. The current implementation validates metric names, finite nonnegative durations, ordered finite timestamps, and optional `questionId` / `attemptId`. Consumers of the same dispatch share one deep-cloned frozen snapshot. Detached delivery uses microtasks and does not enforce the configured queue limit or overflow policy; handler timeout is 30 seconds and faults disable the contribution. Earlier documentation promised independent snapshots and a drop-oldest queue of 100; the implementation differs, creating a compatibility risk for plugins relying on those guarantees. This clarification changes neither the plugin contract nor the SDK implementation. Plugins own upload, retries, and storage.
+
+`SDK_PERFORMANCE_METRICS_V1` retains the unchanged terminal first-frame batch protocol. A first-frame measurement can occur in both streams; choose the appropriate stream to avoid double counting. Existing output-stall detection remains available through `getPlaybackStatus()`, with unchanged thresholds, and is not added to the performance metric streams. Disconnect, disposal, or a new connection attempt clears pending conversation measurements to prevent cross-connection attribution.
+
+Audio-response timings do not represent the exact time sound becomes audible or guarantee per-question audio attribution. `no_speech_report_to_audio_response_ms` is not guaranteed in normal sessions; do not fill a missing measurement with `0`.
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
+import { createClient, SDK_PERFORMANCE_METRIC_V1 } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: { type: 'auth', config: { avatarId: 'demo' } },
-  performanceMonitor: {
-    reporter: (metric: PerformanceMetricRecord) => {
-      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.attemptId ?? metric.questionId);
+  plugins: [{
+    id: 'performance-collector',
+    apiVersion: 1,
+    setup(registrar) {
+      registrar.observe(SDK_PERFORMANCE_METRIC_V1, {
+        id: 'individual-metrics',
+        handler(metric) {
+          console.log('[measurement]', metric.metric, metric.durationMs, metric.attemptId ?? metric.questionId);
+        },
+      });
     },
-  },
-});
-```
-
-Or update at runtime:
-
-```ts
-client.setPerformanceMetricReporter((metric) => {
-  /* Report to OTLP / Custom analytics service */
+  }],
 });
 ```
 
@@ -1030,4 +1198,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_Document version consistent with package version: 2.5.0._
+_Document version consistent with package version: 2.8.0._

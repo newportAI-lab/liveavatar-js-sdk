@@ -1,6 +1,6 @@
-# Facemarket 实时数字人 SDK 使用手册（v2.5.0）
+# Facemarket 实时数字人 SDK 使用手册（v2.8.0）
 
-本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.5.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
+本手册对应 npm 包 `@sanseng/liveavatar-js-sdk` **2.8.0** 版本。SDK 基于 **LiveKit Client**，封装数字人音视频下行、麦克风/摄像头上行、会话文本 与 HTTP 控制面（鉴权模式下获取连接配置）。
 
 ---
 
@@ -17,9 +17,26 @@ SDK 对外提供统一入口 **`createClient` → `SDKClient`**，负责：
 
 ---
 
-## 2. 从 v1 升级到 v2
+## 2. 升级说明
 
-从 **v1.3.2 或 v1.3.3** 升级至当前 **v2.5.0** 时，请参阅独立的 [SDK v1 → v2 升级指南](./SDK_v1到v2升级指南.md)。该指南列出后端 DataChannel 兼容验证、对话事件规范字段、断连错误处理、麦克风 RMS 阈值，以及可选 A/V Sync 和插件能力的迁移工作。
+从 1.x 升级到 **2.8.0**，请阅读 [SDK 1.x → 2.8.0 升级指南](./SDK_v1到v2升级指南.md)，按连接、事件、麦克风和性能上报完成改造。指南以 v1.3.2／v1.3.3 为主要基线，并列出更早 1.x 的额外检查项。历史验证范围仍为 v1.3.2／v1.3.3 → v2.3.0；文档覆盖至 2.8.0 不代表所有路径已完成真实集成验收。当前 2.8.0 为待发布版本。
+
+### 从 2.7.x 升级到 2.8.0
+
+- `startAudioCapture()` 只等待麦克风启用并通过 LiveKit 发布，不再自动创建本 SDK 的采样图。需要音量时显式调用并等待 `startMicLevel()`，随后用同步只读的 `getMicLevel()` 读取；不用时调用 `stopMicLevel()`。旧 `getMicrophoneAudioLevel()` 是兼容别名，也需要显式开启检测，已弃用并将在 3.x 移除。图标依据启动结果和 `isAudioCapturing`，不依据音量是否可用。
+- `startMicLevel()` 成功后首次读取返回真实 RMS，静音为 `0`；检测未开启、无活动麦克风、准备中或不可用为 `null`。采样失败不停止推流；取消等待的 `AbortError` 和非致命 `AUDIO_INPUT_MONITORING_UNAVAILABLE` 应独立处理。检测可提前登记，但不要先等待检测再执行开麦。
+- 停止采集、断连和销毁立即撤销旧启动操作的权限；取消的启动 Promise 可正常完成但不保证已开麦，竞争时检查当前状态。SDK 回收迟到音轨并隔离旧资源清理；采样恢复不会重新开麦或切换设备。详见本地麦克风章节。
+- 浏览器权限失败经结构化证据分类为 `permission` 后，其操作日志从 `error` 降为 `warn`；公开错误和 Promise 拒绝保持原行为。仅接收 error 的消费者应纳入 warn，详见日志章节。
+
+### 从 2.6.x 升级到 2.7.0
+
+- Direct 新增可选 `sessionId`。首次配置成功解析/应用后，`client.sessionId` 从原先的 `undefined` 变为调用方 ID 或带 `sdk-` 前缀的自动标识；依赖该 getter 始终为空的业务应调整判断。仅调用 `updateConnectionConfig()` 暂存不会改变当前值，详见第 5.2 节。
+- 日志 V3、性能 V2、AV Sync Observer V2 和诊断 CoreService V3 为可选新扩展点，最低要求 SDK **2.7.0**，Plugin API 仍为 **1**。旧扩展点保留；选择一个事实流版本，避免重复上传。SDK 升级不会自动迁移插件、采集 schema 或查询。
+
+### 从 2.5.x 升级到 2.6.0
+
+- `performanceMonitor.reporter` 和 `setPerformanceMetricReporter()` 仍可传入或调用，但不再执行回调；默认 `[performance-metric]` Console 输出也已移除。已有性能上传应迁移到第 14.2 节的 `SDK_PERFORMANCE_METRIC_V1` 插件，旧签名将在 3.0.0 移除。
+- 日志级别按 Client 隔离，创建或销毁其他 Client 不会覆盖已有实例的 `debug` 设置。日志 V2 和销毁前回调交接为可选能力，使用方式见第 7.5–7.6 节及插件接入指南。
 
 ---
 
@@ -58,8 +75,8 @@ const client = createClient({
 
 **行为说明**
 
-- `preConnect()` / `connect()`：从当前 Direct 配置（或 `updateConnectionConfig` / `reconnect` 阶段暂存的替换配置）解析出 `livekitUrl` 与 `token`，写入上下文后建立 LiveKit 连接。
-- `reconnect()`：在断开当前连接后调用 `refreshConfig()`；Direct 模式下会再次读取 ConfigManager 中的 Direct 配置（含已通过 `replaceDirectConfig` 应用的 `updateConnectionConfig` 结果），不会调用鉴权 HTTP 拉取房间。
+- `preConnect()`：解析并缓存当前 Direct 配置或暂存的替换配置，不建立 LiveKit 连接。`connect()` 使用有效缓存或解析配置后建立连接。
+- `reconnect()`：断开当前连接后使用最新暂存的 Direct 配置重新连接，不通过鉴权 HTTP 获取房间配置。
 - 不会自动「刷新」服务端签发的 token；令牌过期须由业务侧获取新令牌并调用 `updateConnectionConfig` 后再 `preConnect()` / `connect()` 或 `reconnect()`。
 
 **使用限制**
@@ -75,7 +92,7 @@ const client = createClient({
 ### 2.2 Auth Mode（鉴权模式）
 
 **描述**
-调用方提供 `avatarId`（及可选的 `authToken`、`avatarVoice`）。SDK 通过 `HttpController` 拉取鉴权与房间配置（`ConnectionConfig`），并可将服务端返回的绿幕等 `videoOptions` 合并进上下文。
+调用方提供 `avatarId`（及可选的 `authToken`、`avatarVoice`）。SDK 通过 HTTP 获取鉴权与房间配置，并应用服务端返回的绿幕等 `videoOptions`。
 
 **前置条件**
 
@@ -113,9 +130,9 @@ client.setAuthToken('jwt-or-business-token');
 
 **行为说明**
 
-- `preConnect()` / `connect()`：通过 HTTP 获取 token 与连接负载，解析为 `livekitUrl`、`token`、`roomId` 及可选 `videoOptions`，再建立 LiveKit。
-- `reconnect()`：断开后调用 `refreshConfig()`，**重新走 HTTP** 拉取最新 `ConnectionConfig`（缓存会被清空后重新拉取）。
-- `setAuthToken`：更新上下文中的令牌；若已存在 `HttpController`，会同步刷新其鉴权读取逻辑。
+- `preConnect()`：通过 HTTP 获取并缓存连接配置，不建立 LiveKit 连接。`connect()` 使用有效缓存或重新获取配置，再建立连接。
+- `reconnect()`：断开后**重新通过 HTTP** 获取最新房间配置。
+- `setAuthToken()`：更新后续鉴权和配置请求使用的令牌，不清除已缓存的房间配置。若必须立即取得新配置而当前状态不允许 `reconnect()`，应销毁旧实例并用新令牌创建实例。
 
 **使用限制**
 
@@ -136,7 +153,7 @@ client.setAuthToken('jwt-or-business-token');
 | 必填字段                 | `sfuUrl` + `userToken`                                                                    | `avatarId` + 有效 `authToken`（构造或 `setAuthToken`） |
 | `setAuthToken`           | 不用于解析 LiveKit 连接配置                                                               | 必须或建议在连接前注入                                 |
 | `updateConnectionConfig` | 可用；作用于**下一次** `preConnect()` / `connect()` 或 `reconnect()` 所使用的 Direct 配置 | 不可用（抛出错误）                                     |
-| `reconnect()` 配置刷新   | 使用 `refreshConfig()` 读取 Direct 路径配置（含已 `replaceDirectConfig` 的更新）          | `refreshConfig()` 重新 HTTP 拉取                       |
+| `reconnect()` 配置刷新   | 使用最新暂存的 Direct 配置          | 重新通过 HTTP 获取                       |
 
 ---
 
@@ -212,36 +229,53 @@ await client.connect();
 - `conversation:answer:chunk`
 - `conversation:answer:completed`
 
-**约定**：`questionId` 为较短字符串（实现中常见为 **4 字符**），仅在当前会话内保证唯一；**不适合**作为长期持久化主键。
+**注意**：SDK 生成的 `questionId` 是短随机字符串，未进行会话内查重，可能碰撞；不可作为唯一键或长期持久化主键，业务需使用自己的标识并考虑碰撞对关联的影响。
 
 **强烈建议**：在收到 `conversation:answer:completed` 后，清理该 `questionId` 对应的本地缓冲（文本拼接、UI 状态等），避免内存增长与 ID 复用带来的展示错误。
 
-### 5.2 控制面与媒体面
+### 5.2 会话关联（自 2.7.0 起）
 
-- **媒体面**：LiveKit 房间连接、音视频轨道的订阅与发布、会话文本与协议消息的 **Data Channel** 传输，均由 `LiveKitService` 统一承载。
-- **控制面（Auth）**：`HttpController` + `ConfigManager` 负责在鉴权模式下获取 `livekitUrl`、`token`、`roomId` 及服务端可选的 `videoOptions`（如绿幕开关）。**不存在**与 LiveKit 并行的独立「业务 WebSocket」通道对外 API。
+本节可选 Direct `sessionId` 与统一会话扩展点自 SDK **2.7.0** 起提供；使用新扩展点的插件须将 SDK 最低版本设为 **2.7.0**。Plugin API 仍为 **1**。
 
-### 5.3 视频渲染模式
-
-- `video.renderMode === 'raw'`：直接在 `<video>` 上渲染远端轨道（默认类行为以选项为准）。
-- `video.renderMode === 'processed'`：经 Canvas 处理管线（如绿幕）。
-- **Auth 模式**下，服务端绿幕配置仍可映射为 `renderMode` / `greenScreen`（见 `ConfigManager._fromAuthPayload`），但绝不会据此选择透明视频布局；省略 `videoLayout` 即保持旧行为。
-
-### 5.4 后端视频布局与透明输出
-
-后端创建会话后，应在创建 client 前把完整响应中的 `videoLayout` 原样传入 `video.videoLayout`。它是远端视频格式的唯一依据；SDK 不会根据尺寸、绿幕参数或像素内容猜测布局。
+Direct 的 `connectConfig.config` 与 `updateConnectionConfig()` 接受 `sessionId?: string`。字符串先去除首尾空白；未传、`undefined`、空串、全空白或运行时 `null` 时，SDK 自动生成带 `sdk-` 前缀的标识。后缀优先使用 `crypto.randomUUID()`，不可用时使用时间戳与随机串回退；调用方应将其视为不透明字符串，不解析后缀格式。其他非字符串值导致 `SDK_PRECONNECT_FAILED`。该标识用于业务关联，不是鉴权凭据，不会被写入仅属于 Auth 的 `serverSessionId`。
 
 ```ts
 const client = createClient({
-  connectConfig: { type: 'direct', config: { sfuUrl: credentials.sfuUrl, userToken: credentials.userToken } },
-  video: { containerElement: document.getElementById('avatar')!, videoLayout: credentials.videoLayout },
+  connectConfig: {
+    type: 'direct',
+    config: { sfuUrl, userToken, sessionId: 'business-session-42' },
+  },
 });
+// 配置真正成功解析/应用前为 undefined；无需先建立 RTC 连接。
+await client.preConnect();
+console.log(client.sessionId); // 'business-session-42'
+client.updateConnectionConfig({ sfuUrl, userToken, sessionId: 'next-session' });
+// 仅暂存，getter 与当前连接保持原值；下次配置应用后才切换。
 ```
 
-- `plain-v1`（`avatar-video`、H264、`alphaPlane: 'none'`）保持现有 raw 或显式客户端绿幕路径，编码尺寸必须等于内容尺寸。
-- `rgb-alpha-vertical-v1`（`alphaPlane: 'bottom-luma'`）将上半 RGB 和下半 luma alpha 用 WebGL 合成为透明 Canvas；编码高度必须刚好是内容高度的两倍。它优先于 `renderMode` 与 `greenScreen`，不会展示 packed 原始 `<video>`。
-- SDK 会同步校验该契约，保存冻结快照并通过 `client.videoLayout` 暴露。布局在 client 生命周期内不可变；后端布局变化需要新建 client，`updateConnectionConfig()` 与 reconnect 都不会修改它。
-- 省略 `videoLayout` 只为兼容旧调用方，完全保持原有行为，绝不表示透明视频。
+新输出的 `SDKSessionCorrelation` 为 `{ clientInstanceId, sessionId, sessionEpoch }`。同一个 Client 的 epoch 从 **1** 开始，每个新生命周期递增且不复用。业务提供的 `sessionId` 可以重复；使用 `clientInstanceId + sessionEpoch` 隔离生命周期，并保留 `sessionId` 作业务关联，不能单凭它作为持久化唯一键。`attemptId` 继续只表示一次首帧测量。
+
+- Direct 比较规范化后的 `sfuUrl`、`userToken` 及调用方 `sessionId`；三者相同、缓存命中、refresh 及内部 reconnect 延续生命周期。仅 ID 变化也会在配置应用时开启新 epoch；仅暂存不会切换。
+- 显式 `disconnect()` 结束当前生命周期；再次准备配置开启新 epoch，自动 ID 随之新建，调用方 ID 可保持相同。被动掉线及内部重连拆卸本身不结束生命周期。
+- Auth 实际配置获取开始时生成带 `sdk-` 前缀的临时标识，使用相同的 UUID 优先及回退规则；自动重试、并发复用请求不切换。成功返回服务端 ID 后在同一 epoch 绑定；仅新日志 V3 发布 `session.id-bound`，顶层 `sessionId` 为新 ID，`data` 仅携带 `previousSessionId`。缺少服务端 ID 时新输出保留本地 ID。Auth 的 `client.sessionId` 仍遵循原服务端 ID getter 契约。
+- 异步工作和媒体资源保存所属 epoch 的快照；迟到结果、旧遥测和历史字段不会从当前会话补填，避免跨生命周期串联。
+
+分阶段迁移：日志选择 `SDK_OPERATIONAL_LOGS_V3`（`sdk.log` / schemaVersion 3），性能选择 `SDK_PERFORMANCE_METRIC_V2` 或 `SDK_PERFORMANCE_METRICS_V2`（批次为 `sdk.performance-metrics` / 2），AV Sync 选择 `SDK_AVSYNC_ALERTS_V2`、`SDK_AVSYNC_ANALYSES_V2`、`SDK_AVSYNC_SESSION_ENDED_V2` 和 `SDK_AVSYNC_DIAGNOSTICS_V3`。新契约使用应用 `sessionId + sessionEpoch`，媒体诊断 ID 单独命名 `avsyncSessionId`，不输出 `monitoringSessionId`。详见插件指南。
+
+旧日志 V1/V2、性能 V1、AV Sync 旧扩展点、Client 直接诊断 API 和公开事件保留原字段、schema、时序与含义：`monitoringSessionId` 仍关联旧输出，旧 AV Sync `sessionId` 仍是媒体诊断 ID。日志 V3 的顶层应用 `sessionId` 表示当前本地/绑定 ID，媒体 `avsyncSessionId` 独立；不重复输出 Auth `serverSessionId`。Plugin API 仍为 **1**。
+
+当前 SkyWalking 插件 **1.1.0** 只使用旧契约；继续使用匹配的旧扩展点，SDK 升级不代表插件或采集端已迁移。后续须分别迁移插件、采集 schema 和查询，再计划在 **3.0** 清理旧 `monitoringSessionId` 出口；本次不执行该清理。
+
+### 5.3 控制面与媒体面
+
+- **媒体面**：通过 LiveKit 连接房间、订阅与发布音视频，并通过 **Data Channel** 传输会话文本与协议消息。
+- **控制面（Auth）**：通过 HTTP 获取 `livekitUrl`、`token`、`roomId` 及服务端可选的 `videoOptions`（如绿幕开关）。**不存在**与 LiveKit 并行的独立「业务 WebSocket」通道对外 API。
+
+### 5.4 视频渲染模式
+
+- `video.renderMode === 'raw'`：直接在 `<video>` 上渲染远端轨道（默认类行为以选项为准）。
+- `video.renderMode === 'processed'`：经 Canvas 处理管线（如绿幕）。
+- **Auth 模式**下，服务端绿幕配置可映射为 `renderMode` / `greenScreen`。
 
 ---
 
@@ -261,7 +295,7 @@ const client = createClient({
 | `performanceMonitor` | `PerformanceMonitorOptions` | 否   | 默认开启；`enabled: false` 可关闭                                                       |
 | `sandbox`            | `boolean`                   | 否   | 沙箱开关（依业务后端约定）                                                              |
 | `debug`              | `boolean \| DebugOptions`  | 否   | 可选 Debug、LiveKit verbose 与 A/V 诊断配置；详见第 7 章「Debug 与 A/V 诊断」。          |
-| `plugins`            | `readonly SDKPlugin[]`      | 否   | 构造期安装的插件列表。传入已从插件包导入的 `SDKPlugin`；单个安装失败不影响客户端构造。详见[插件接入文档](./SDK_插件接入文档.md)。 |
+| `plugins`            | `readonly SDKPlugin[]`      | 否   | 构造期安装的插件列表。传入已从插件包导入的 `SDKPlugin`；单个安装失败不影响客户端构造。详见[插件接入指南](./SDK_Plugin_Integration_Guide.md)。 |
 
 本章仅列出构造参数。Debug 日志、A/V 诊断、自动视频停滞告警和实验性 frame metadata worker 的完整配置及行为说明见第 7 章。
 
@@ -274,6 +308,7 @@ const client = createClient({
 | `type`             | `'direct'` | 是   |
 | `config.sfuUrl`    | `string`   | 是   |
 | `config.userToken` | `string`   | 是   |
+| `config.sessionId` | `string`   | 否；自 2.7.0 起，去除首尾空白，省略则自动生成 |
 
 **Auth**
 
@@ -291,7 +326,6 @@ const client = createClient({
 | `containerElement` | 视频渲染挂载的容器（**业务侧应保证存在且已插入 DOM**）                |
 | `renderMode`       | `'raw'` \| `'processed'`                                              |
 | `greenScreen`      | `{ enabled, chromaKey?, similarity?, smoothness?, despillStrength?, isBackgroundKeying? }`；`isBackgroundKeying` 默认 `false` |
-| `videoLayout`      | 可选后端契约：`PlainVideoLayout` 或 `RGBAlphaVerticalVideoLayout`。在 `createClient()` 前原样传入，构造后不可修改。 |
 | `fitMode`          | `'contain' \| 'cover' \| 'fill' \| 'none'`                            |
 | `camera`           | `{ publishToLiveKit?: boolean }`                                      | 默认 `false`；为 `true` 时 `startCamera()` 将轨道发布到 LiveKit 房间。 |
 | `debug`            | 继承 `BaseOptions`                                                    |
@@ -303,23 +337,31 @@ const client = createClient({
 | `input`  | `{ deviceId?: string, sampleRate?: number, channelCount?: number, sampleSize?: number, noiseSuppression?: boolean, voiceIsolation?: boolean, bitDepth?: number, echoCancellation?: boolean, autoGainControl?: boolean, constraints?: MediaTrackConstraints }` |
 | `output` | `{ enabled?: boolean, volume?: number, muted?: boolean }` 播放侧默认值                                                                                                                                                                                        |
 
-**注意**：`channelCount` 为可选，默认为 `1`。`noiseSuppression`、`echoCancellation`、`autoGainControl` 未设置时默认值为 `true`。
+**输入优先级**：顶层显式字段覆盖 `constraints` 中的同名成员；其他标准 constraint 成员原样保留并传给 `getUserMedia`。`sampleSize` 正式传入采集请求；`bitDepth` 是仅在未设置 `sampleSize` 时使用的已弃用别名，最后回退到 `constraints.sampleSize`。`noiseSuppression`、`echoCancellation`、`autoGainControl` 只有在顶层字段和 `constraints` 都未设置时才默认为 `true`，不会覆盖显式 `false`。本地 PCM 处理在没有可用数值时使用 `channelCount` 默认值 `1`。
+
+采集请求成功不代表设备接受了全部约束；实际值以 `getMicrophoneStats().settings` 返回的浏览器设置为准。
 
 ### 6.5 `performanceMonitor`
 
 | 字段       | 说明                                                   |
 | ---------- | ------------------------------------------------------ |
 | `enabled`  | 默认 `true`；`false` 关闭内置性能采集                  |
-| `reporter` | `(metric: PerformanceMetricRecord) => void` 自定义上报 |
+| `reporter` | `(metric: PerformanceMetricRecord) => void`；**已无作用，配置被忽略，回调不执行；3.0.0 移除** |
 
 ### 6.6 `MicrophoneStats`
 
 | 字段            | 说明             |
 | --------------- | ---------------- |
-| `bytesSent`     | 已发送字节数     |
-| `packetsSent`   | 已发送数据包数   |
-| `packetsLost`   | 丢失的数据包数   |
-| `roundTripTime` | 往返时间（毫秒） |
+| `bytesSent`     | 已发送字节数；缺失时兼容填 `0`，需结合 `availability.bytesSent` 判断 |
+| `packetsSent`   | 已发送数据包数；缺失时兼容填 `0`，需结合 `availability.packetsSent` 判断 |
+| `packetsLost`   | 丢失的数据包数，可为负值；缺失时兼容填 `0`，需结合 `availability.packetsLost` 判断 |
+| `roundTripTime` | **旧字段**：LiveKit outbound RTP 的原始 RTT 秒值，为兼容保留；缺失时为 `0`。新代码请使用 `roundTripTimeMs` |
+| `roundTripTimeMs` | 由原始秒值换算的往返时间（毫秒）；不可用时为 `null` |
+| `availability`  | 各统计字段的有效证据标记：`bytesSent`、`packetsSent`、`packetsLost`、`roundTripTimeMs`。旧字段为 `0` 且标记为 `false` 表示缺失；`0` 且为 `true` 表示真实零 |
+| `settings`      | 浏览器实际 `MediaStreamTrack.getSettings()` 归一化后的 `MicrophoneTrackSettings`；无法读取时为 `null` |
+| `sampledAtMs`   | 查询时间（`performance.now()`）。每次调用都重新读取发送统计与 track settings，不缓存 |
+
+`MicrophoneTrackSettings` 包含可空的 `deviceId`、`groupId`、`sampleRate`、`channelCount`、`sampleSize`、`echoCancellation`、`noiseSuppression`、`autoGainControl`、`voiceIsolation`。无活动麦克风、无 sender report 或发送统计请求失败时，`getMicrophoneStats()` 仍返回 `null`；仅 settings 读取失败不会影响统计返回。
 
 ---
 
@@ -327,7 +369,11 @@ const client = createClient({
 
 ### 7.1 基础 Debug 与 LiveKit verbose
 
-`debug: true`、`debug: {}` 仅开启 SDK Debug 日志；只有 `debug: { verbose: true }` 才会开启 LiveKit JS SDK 的内部 Debug 日志。SDK Logger 与 LiveKit Logger 都是同一页面的 runtime 全局设置：每次创建客户端都会应用当前配置；`debug` 为 `false` 或省略时 SDK Logger 恢复为 `ERROR`，非 `verbose: true` 时 LiveKit Logger 恢复为 `info`，客户端 `dispose()` 也会恢复这两个默认级别。因此最后创建或释放的 SDK 客户端会影响同页其他 SDK 或 LiveKit 客户端的日志级别。
+SDK 普通 Console 日志按 Client 隔离：`debug` 为 `false` 或省略时该实例默认使用 `ERROR`，`true` 或对象（包括 `{}`）默认使用 `DEBUG`。创建或销毁其他 Client 不改变该实例级别。
+
+显式调用 `Logger.setLevel()` 会立即影响调用时已有的 Client；之后新建的 Client 按自身 `debug` 初始化。`Logger.setPrefix()` 统一设置 SDK Console 日志前缀。
+
+`debug: { verbose: true }` 开启 LiveKit Debug 日志。同一 SDK 模块副本内，只要仍有未销毁的 Client 请求 verbose，LiveKit 就保持 `debug`，否则为 `info`；断开和重连不会取消该设置，`dispose()` 会释放。LiveKit 日志级别为全局设置，可能影响同页其他 LiveKit 实例；独立 SDK 副本之间不协调。
 
 ### 7.2 周期 A/V 诊断（`debug.avSync`）
 
@@ -341,7 +387,13 @@ debug: {
 
 后台采样最多等待 10 秒以接收通过 renderer 参与者过滤的首个远端音频或视频轨道；超时后停止当前连接会话的后台采样，并在上传日志中记录 `remote-track-wait-timeout`。该超时不影响手动 `captureRemoteAvSyncDiagnostics()`。
 
-离线证据经 `getAvSyncRawTelemetry(query?)` 按页返回，不再输出 `[RTC remote-media]` Console 行；无参只返回最近 5 分钟、最多 200 条，使用 `range`、`pageSize` 和 `page.nextCursor` 读取更多记录。日志查询和事实摘要在 Dedicated Worker 执行，主动 capture 仍在浏览器主线程读取当前 WebRTC stats。`avSyncLogRetention` 返回保留量、存储错误和丢弃量；Room 断开会冻结最后会话供分页查询，重连替换它，`dispose()` 和连接建立失败会清除它。
+离线证据经 `getAvSyncRawTelemetry(query?)` 按页返回，不再输出 `[RTC remote-media]` Console 行；无参只返回最近 5 分钟、最多 200 条，使用 `range`、`pageSize` 和 `page.nextCursor` 读取更多记录。telemetry Worker 可用时，日志查询和事实摘要在 Dedicated Worker 执行；创建时无 Worker 则使用内存回退。主动 capture 仍在浏览器主线程读取当前 WebRTC stats。`avSyncLogRetention` 返回保留量、存储错误和丢弃量；Room 断开会冻结最后会话供分页查询，重连替换它，`dispose()` 和连接建立失败会清除它。
+
+分页契约：时间范围包含两端；`recent.durationMs` 必须为正有限数，wall-clock 端点必须有限且 `fromMs <= toMs`。`pageSize` 必须是 1–1000 的整数，默认 200。非法参数、空/损坏 cursor、跨会话 cursor、cursor 与 range 同传均拒绝为 `SDKError`，code 为 `RTC_INVALID_AV_SYNC_TELEMETRY_QUERY`；没有当前或冻结会话时仍校验参数。
+
+第一页 cursor 固定会话、时间范围和 sequence 上界，续页允许调整 pageSize；`hasMore: true` 一定附带可用 `nextCursor`，末页为 false/null。`summary` 统计完整查询窗口内且不超过该上界的所有可用日志，不受当前页影响；`includeSummary: false` 返回 null 并跳过聚合。`currentDiagnosis` 是本次调用的当前诊断上下文。`availableFrom/ToWallClockMs` 描述当前会话上界内保留日志的可用边界；`truncated` 反映 retention 对窗口的淘汰，不代表正常分页。后续新增日志不会进入旧 cursor 的页或摘要，但 retention 淘汰可能减少后续可读证据，SDK 不保留服务器式窗口快照。
+
+telemetry Worker 与创建时无 Worker 的回退共用上述分页算法。LocalStore 负责已封口分段的留存预算和淘汰；Worker 查询这些保留分段及未封口 tail 的增量内存镜像，不等待持久化，也不回读 IndexedDB。待写入或写入失败的证据仍可存在于镜像中；存储状态反映请求时已知的信息，不代表待完成的写入已成功。无 Worker 时仅查询回退实际拥有的内存证据，不具备同等持久化历史覆盖。运行中的原始遥测或证据查询失败会向上传递，不自动降级；分析 Worker 不可用或镜像证据不完整时，分析返回 `insufficient_evidence`。此 telemetry Worker 与第 7.4 节的实验性 frame metadata worker 是不同组件。
 
 ### 7.3 自动视频停滞告警
 
@@ -365,7 +417,7 @@ client.events.on(`sdk:avSyncAlert`, (alert) => {
 });
 ```
 
-所有告警阶段发送给稳定公开 `sdk:avSyncAlert`，并可由已安装插件接收；插件接入方式见[插件接入文档](./SDK_插件接入文档.md)。只有首次 `raised` 会写入留存的 `video-pipeline-stalled` 事实证据。SDK 不会自动上传告警或日志。只监听公开事件、不轮询 `getAvSyncAnalysis()`，即可覆盖上述自动周期观测 transition；但 `getAvSyncAnalysis()` 仍负责轨道绑定、传输退化、音频 concealment、播放和相对漂移等完整保留窗口的手动分析。此类 finding 只有业务实际调用分析 API 后才可能变为告警。
+所有告警阶段发送给稳定公开 `sdk:avSyncAlert`，并可由已安装插件接收；插件接入方式见[插件接入指南](./SDK_Plugin_Integration_Guide.md)。只有首次 `raised` 会写入留存的 `video-pipeline-stalled` 事实证据。SDK 不会自动上传告警或日志。只监听公开事件、不轮询 `getAvSyncAnalysis()`，即可覆盖上述自动周期观测 transition；但 `getAvSyncAnalysis()` 仍负责轨道绑定、传输退化、音频 concealment、播放和相对漂移等完整保留窗口的手动分析。此类 finding 只有业务实际调用分析 API 后才可能变为告警。
 
 ### 7.4 实验性 Frame Metadata Worker
 
@@ -387,7 +439,7 @@ debug: {
 
 ### 7.5 插件引入与配置
 
-插件开发、扩展点和运行语义见[插件接入文档](./SDK_插件接入文档.md)。使用插件时，从其自身包导入 `SDKPlugin` 对象；将下面占位符替换为“当前已支持插件包”目录中实际插件提供的包名和导出名。
+插件开发、扩展点和运行语义见[插件接入指南](./SDK_Plugin_Integration_Guide.md)。使用插件时，从其自身包导入 `SDKPlugin` 对象；将下面占位符替换为“当前已支持插件包”目录中实际插件提供的包名和导出名。
 
 ```ts
 import { createClient } from '@sanseng/liveavatar-js-sdk';
@@ -415,20 +467,69 @@ runtimeClient.uninstallPlugin(plugin.id);
 
 同一插件 ID 不应同时出现在 `plugins` 与同一实例的 `installPlugin()` 中；运行期安装前请检查结果。`uninstallPlugin()` 返回 `true` 表示已卸载，`false` 表示当前实例中不存在该 ID。
 
+#### 销毁期 Observer 交接
+
+自 **2.6.0** 起，插件可设置 `terminalObserverDelivery: 'sync-before-dispose'`，在 Client 销毁前同步接收当时尚可执行的待处理 Observer 回调，包括已产生的会话结束日志。普通业务继续调用 `client.dispose()` 即可；不使用插件时无需增加处理。
+
+SDK 不等待上传或持久化完成。插件应在回调首次 `await` 前接收或入队数据，并在自身 `dispose()` 中使用自有上传资源完成后续处理；不能依赖销毁后的 SDK 服务。此选项不改变正常回调和显式 `uninstallPlugin()` 的行为，也不保证页面退出后上传成功。
+
+使用该能力的插件应将 SDK peer dependency 最低版本设为 **2.6.0**，Plugin API 仍为 `1`。完整约定与示例见[插件接入指南](./SDK_Plugin_Integration_Guide.md#51-terminal-observer-handoff)。
+
 #### 当前已支持插件包
 
 | 插件包 | 用途 | 状态 |
 | --- | --- | --- |
 | `@sanseng/liveavatar-js-sdk-markdownrender` | Markdown 渲染；导出、配置和兼容版本见插件包文档。 | 已列入插件目录 |
-| `@sanseng/liveavatar-js-sdk-skywalking` | 已发布的 SkyWalking 集成，当前用于 A/V Sync 诊断与 SDK error；已发布版本不会因 SDK 升级自动消费 v2.4.0 首帧 observer 或日志。 | 需插件独立兼容版本 |
+| `@sanseng/liveavatar-js-sdk-skywalking` | SkyWalking 集成；已核对的 1.1.0 使用旧 SDK 契约，上传覆盖范围以插件文档为准。 | 新会话契约需独立迁移插件 |
 
-SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `performance.first-frame` 后，才可自行上报 setPerformance 或 reportFrameErrors。SDK 不拥有其鉴权、队列、重试或上传。
+SkyWalking 1.1.0 不消费本次新增的会话契约；插件与采集端须分别迁移。SDK 不拥有插件的鉴权、队列、重试或上传。
 
 ---
 
+### 7.6 运行日志与诊断证据
+
+SDK 不自动上传日志。业务通过插件接收并发送到自己的平台；SDK 升级不会自动改变已有插件的上报内容。
+
+| 插件能力 | 用途 | 最低 SDK 版本 |
+| --- | --- | --- |
+| `SDK_OPERATIONAL_LOGS_V1` | 继续接收原有运行日志 | 保持原插件兼容范围 |
+| `SDK_OPERATIONAL_LOGS_V2` | 接收包含操作结果、错误原因和会话关联的 `SDKLogRecordV2` | `2.6.0` |
+| `SDK_AVSYNC_DIAGNOSTICS_V2` | 通过 `getAvSyncLogEvidence(query?)` 按页读取已有音画诊断证据 | `2.6.0` |
+| `SDK_OPERATIONAL_LOGS_V3` | 统一应用会话关联的日志 V3（第 5.2 节） | `2.7.0` |
+| `SDK_PERFORMANCE_METRIC_V2` / `SDK_PERFORMANCE_METRICS_V2` | 统一应用会话归属的单条/批次性能指标 | `2.7.0` |
+| `SDK_AVSYNC_ALERTS_V2` / `SDK_AVSYNC_ANALYSES_V2` / `SDK_AVSYNC_SESSION_ENDED_V2` | 分离应用会话与媒体诊断身份的音画 Observer | `2.7.0` |
+| `SDK_AVSYNC_DIAGNOSTICS_V3` | 统一会话关联的音画快照、遥测、分析与日志证据 | `2.7.0` |
+
+V1 继续可用；同一用途选择一个实时日志版本，避免重复上传。V2 通过 `clientInstanceId + monitoringSessionId` 关联监控会话；`serverSessionId` 为服务端会话，`avsyncSessionId` 为音画诊断会话，不应混用。
+
+`getAvSyncLogEvidence()` 由插件通过 `registrar.consume(SDK_AVSYNC_DIAGNOSTICS_V2)` 获取的服务提供，不会启动额外采样；提前启用 `debug.avSync` 才能持续留存诊断证据。首次查询直接返回已有证据，无需预热或重复调用。查询条件和分页方式与 `getAvSyncRawTelemetry()` 一致。接入示例见[插件接入指南](./SDK_Plugin_Integration_Guide.md#41b-structured-logs-and-av-sync-evidence-v2)。
+
+#### 日志 V3 的精简记录
+
+跨实例诊断标识使用无填充 Base64URL 紧凑编码：`clientInstanceId` 为 `c_` 加 22 字符，`monitoringSessionId` 为 `m_` 加 22 字符，本地证据的页面生命周期标识为 `p_` 加 22 字符。SDK 优先完整编码 `crypto.randomUUID()` 的 16 字节；不可用或调用失败时使用 `crypto.getRandomValues()` 获取 16 字节，不截断或哈希 UUID，因此保留原有随机位与碰撞安全水平。两种加密随机源均不可用时，回退为类型前缀、36 进制时间、模块内递增序号和随机串；回退长度不固定为 24 字符，也不具有加密随机源的唯一性保证。随机 ID 不承诺数学上的绝不碰撞。所有这些标识都应视为不透明字符串，不解析其前缀或长度。
+
+跨实例短标识用于所有日志、性能和诊断版本，包含 Client ID 的派生标识随之变短；旧字段、拼接规则与唯一性作用域保持不变，历史记录不改写。调用方、后端、浏览器和 LiveKit 提供的 ID，以及 SDK 自动应用 `sessionId` 的 `sdk-` 规则不变。`failureId`、`alertId` 保留包含所属 Client 的完整身份，支持独立消费；不要从操作短 ID 推导它们。
+
+Log V3 保持 `schema: 'sdk.log'`、`schemaVersion: 3`、`SDK_OPERATIONAL_LOGS_V3` major 3。该格式自 SDK 2.7.0 起提供，当前 SDK 为 2.8.0；旧 V1/V2 的字段与语义不变。
+
+自 2.8.0 起，结构化证据分类为 `permission` 的浏览器权限失败（`NotAllowedError` / `SecurityError`），在 V1 `sdk.error` / `operation.failed` 和 V2/V3 `sdk.failure` 中将原 `error` 级别降为 `warn`，已有较低级别保留。权限不可用不等于用户主动拒绝；HTTP 401/403、LiveKit `NotAllowed` 及其他后端、设备和未知异常沿用原规则，前置条件与已确认取消的分类优先级保持不变。失败记录、错误码、操作结果、公开 `sdk:error` 和 Promise 拒绝不因降级而改变；仅按 error 过滤的消费者应调整为接收 warn，或按失败事件统计。
+
+每条记录包含 `clientInstanceId`、`stream: 'operational' | 'avsync'`、`sequence`、Unix 墙钟 `occurredAtMs`、`level`、`module`、`event`；可选 `sessionId`、`sessionEpoch`、`avsyncSessionId`、`observedAtMs`、`trigger`、`operation`、顶层 `failureId`、`error`、`correlation`、`snapshot` 和 `data`。V3 不输出顶层 `eventId`、`streamId`、`clockId`、`serverSessionId`、`failureRef`，也不在 `error` 内重复 `failureId`。内部 Auth 服务端 ID 和 Auth getter 继续保留原行为。
+
+- Operational 记录去重键为 `[clientInstanceId, 'operational', sequence]`，序号覆盖 Client 生命周期，包括独立的 `sdk.failure`；AV Sync 为 `[clientInstanceId, 'avsync', avsyncSessionId ?? null, sequence]`，沿用每个媒体诊断源的序号。同一空间按序号排序，不跨空间混排。键不含应用 `sessionId`/`sessionEpoch`，Auth 绑定不会改变已有记录身份。生命周期隔离仍使用 Client 加 epoch。
+- `occurredAtMs` 表示事实发生的 Unix 墙钟毫秒；可用的 `observedAtMs` 表示主 Client 单调时钟毫秒，Operational 在发布时读取（失败也不回用捕获时刻），AV Sync 保留源观测值。时钟基准由契约隐含，不另加 ID。两类时钟不能相减；发布间隔不是业务耗时，业务耗时使用已有测量字段。
+- 一次源失败只有一个携带完整 `error` 的 `sdk.failure`，其顶层 `failureId` 沿用 V2 的同一源身份。相关操作/流程结果以相同顶层 `failureId` 引用它，不再按 eventId 关联或重复错误详情。`error.operation`、`error.phase`、`error.protocolEvent` 可补充 operation 未表达的失败现场。
+- `snapshot` 仅保留连接状态：SDK 状态、HTTP/RTC 标志、Room 是否存在/状态、是否曾连接及上次断开。源、时间、身份和原因不再重复，错误证据位于 `error.evidence`。
+- SDK 自生成操作在 V3 中使用 `o1`、`o2`、`o10` 等十进制短序号；`operationId`、`rootOperationId`、`parentOperationId` 和两处 `relatedOperationId` 统一投影。完整操作关联键为 `[clientInstanceId, operationId]`，不同 Client 可分别出现 `o1`。序号沿用源操作的 Client 生命周期，不因重连、配置切换、Auth 绑定或插件卸载重装重置；内部源 ID 和 V1/V2 操作拼接规则不变。只有与记录所属 Client 精确匹配的 SDK 操作 ID 会转换，其他值原样保留。操作键用于关联，不替代上述记录去重键。
+- `operation.phase` 可省略：事件名已表达的 started/finished/事件名不重复，真实 request/response/init 等阶段保留。根操作不重复自身 `rootOperationId`，子操作仍保留根 ID。operation 与 correlation 的 `relatedOperationId` 相同时只保留 correlation；不同时两者都保留。
+- `trigger` 可省略：unknown 和默认 SDK 事件入口省略，真实 API、backend、browser 及有独立含义的 SDK 入口保留。`correlation.mediaStreamId` 表示浏览器 MediaStream ID，区别于旧 V2 的 `correlation.streamId`。
+- Auth 的 `session.id-bound` 使用顶层新 `sessionId`，`data` 仅含 `previousSessionId`。不回写早期事实。`sdk.log-evidence` 页面仍为版本 3，`records` 使用上述精简 V3；窗口、游标、首次查询和 measurements 字段名、单位、0/false/null 不变。
+
+这些精简规则仅适用于日志 V3 与其证据记录，不删除性能 V2、AV Sync 告警 V2 或原始遥测中的字段。旧日志 V2 继续使用 eventId、streamId、clockId、serverSessionId 和 failureRef 的旧语义；SkyWalking 1.1.0 仍走旧契约，没有自动启用 V3 上传。
+
 ## 8. 核心 API 方法
 
-以下方法均定义于 `SDKClient`（`src/client/SDKClient.ts`）。除构造与 `setAuthToken` / `updateConnectionConfig` 外，多数媒体与会话 API 要求 **已成功 `connect()`**（内部通过 `sessionState.isConnected` 校验）。
+以下为 `SDKClient` 的公共方法。多数媒体与会话 API 要求 **已成功 `connect()`**；鉴权与连接配置可在连接前设置。
 
 ### 8.1 连接与生命周期
 
@@ -437,7 +538,7 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 | `preConnect(): Promise<boolean>`           | 预拉取并缓存连接配置（带 TTL，默认 60s 量级，见 `PRECONNECT_CACHE_DURATION_MS`）。失败抛出错误。          |
 | `connect(): Promise<void>`                 | 建立协调器、各域控制器与 LiveKit；内部可在无有效缓存时等价调用预连接路径。                                |
 | `disconnect(): Promise<void>`              | 停止采集、断开 LiveKit、结束 HTTP 会话相关清理；实例可再次 `connect()` / `reconnect()`。                  |
-| `reconnect(): Promise<ConnectionSnapshot>` | 手动重连：先 `disconnect()`，再按模式刷新配置后 `connect()`。若当前状态不允许重连，返回当前快照并打日志。 |
+| `reconnect(): Promise<ConnectionSnapshot>` | 允许时重建连接，返回触发时的快照；状态不允许时跳过并返回当前快照。成功后应读取当前 `connectionSnapshot` 或连接事件判断状态。 |
 | `installPlugin(plugin): SDKPluginInstallResult` | 原子安装 Plugin API v1 插件；拒绝以结果数据返回，不影响 SDK 生命周期。 |
 | `uninstallPlugin(pluginId: string): boolean` | 原子卸载全部 contribution、失效旧 handle 并调用插件 dispose。 |
 | `dispose(): void`                          | 释放全部资源；之后不得再使用该实例。                                                                      |
@@ -448,25 +549,27 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 
 | 方法                                                           | 说明                                                                                                                                                                          |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `setAuthToken(token: string): void`                            | 写入鉴权令牌；**Auth 模式**下供 HTTP 与 Config 拉取使用。                                                                                                                     |
-| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存，**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 流程中通过 `replaceDirectConfig` 生效。 |
+| `setAuthToken(token: string): void`                            | 写入后续 Auth 请求使用的鉴权令牌；不清除已缓存的房间配置。 |
+| `updateConnectionConfig(config: DirectConnectionConfig): void` | **仅 Direct**。校验 `sfuUrl` / `userToken` 非空后暂存；自 2.7.0 起另支持可选 `sessionId`（规则见 5.2），**不影响当前已连接会话**；在下次 `preConnect()` / `connect()` 或 `reconnect()` 时生效。 |
 
 ### 8.3 媒体
 
 | 方法                                                     | 说明                               |
 | -------------------------------------------------------- | ---------------------------------- |
 | `setRenderFitMode(mode: RenderFitMode): void`            | 设置画面适配模式。                 |
-| `videoLayout`                                           | 只读的冻结布局副本；旧调用方未提供布局时为 `undefined`。 |
-| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 仅在已连接的 plain/legacy 会话中实时更新绿幕参数，不能替换或展示 `rgb-alpha-vertical-v1` 的 packed 原帧。 |
-| `startAudioCapture(): Promise<void>`                     | 打开麦克风并通过 LiveKit 发布。    |
+| `updateGreenScreenOptions(options: Partial<GreenScreenOptions>): void` | 在已连接会话中实时更新绿幕参数；修改仅作用于当前连接。 |
+| `startAudioCapture(): Promise<void>` | 只负责启用麦克风并通过 LiveKit 发布，不自动开启 RMS、PCM 或本地可视化。 |
 | `stopAudioCapture(): Promise<void>`                      | 停止麦克风发布。                   |
 | `setVolume(volume: number): void`                        | 播放音量 `0..1`。                  |
-| `getVolume(): number`                                    | 读取播放音量。                     |
-| `mute()` / `unmute()`                                    | 播放静音控制。                     |
+| `getVolume(): number` | 读取播放音量；当前 2.8.0 实现中底层音量为 `0` 时会返回 `1`，不能用此返回值判断静音或真实零音量。 |
+| `mute()` / `unmute()`                                    | 播放静音控制，不影响远端音频分析。 |
 | `get isMuted`                                            | 是否静音。                         |
 | `get isAudioCapturing`                                   | 麦克风是否处于活跃发布状态。       |
-| `getMicrophoneAudioLevel(): number \| null`              | 获取最近一个 4096-sample 本地 PCM 帧的线性 RMS (0.0-1.0)；首帧前为 `0`，无活动麦克风时为 `null`。 |
-| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计信息。           |
+| `startMicLevel(): Promise<void>` | 显式开启 RMS 检测；可在开麦前调用并等待后续音轨，真实窗口就绪后完成，不代为开麦。 |
+| `getMicLevel(): number \| null` | 同步只读线性 RMS（0..1）；检测未开启、无活动麦克风、准备中或不可用为 `null`，真实静音为 `0`。 |
+| `stopMicLevel(): void` | 清除 RMS 需求并取消未完成的开启等待，不影响推流、PCM 或可视化。 |
+| `getMicrophoneAudioLevel(): number \| null` | **已弃用，3.x 移除**；兼容转调 `getMicLevel()`，返回值及错误行为相同。 |
+| `getMicrophoneStats(): Promise<MicrophoneStats \| null>` | 获取麦克风发送统计和实际 track settings；每次调用重新采样。`availability` 区分真实零与缺失，RTT 毫秒值使用 `roundTripTimeMs`。无活动麦克风、无 sender report 或发送统计失败时返回 `null`。 |
 | `isMicrophoneSilent(): Promise<boolean \| null>`         | 检测麦克风是否在发送静音。         |
 | `startCamera(options?: { publishToLiveKit?: boolean }): Promise<void>` | 开启摄像头；可选择发布到 LiveKit 房间（默认仅本地预览）。 |
 | `stopCamera(): void`                                     | 停止摄像头。                       |
@@ -474,12 +577,56 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 | `getCameraTrack(): MediaStreamTrack \| null`             | 本地轨道。                         |
 | `attachCameraTo(videoElement: HTMLVideoElement): void`   | 将本地摄像头画面绑定到 `<video>`。 |
 | `detachCameraFrom(videoElement: HTMLVideoElement): void`  | 将摄像头轨道从视频元素解绑。       |
-| `startAnalyserEmission(): void`                         | 开始发送远端音频分析器数据（~60fps）。若远端音频轨道尚未到达，将自动延迟等待轨道订阅成功后开始发送。 |
-| `stopAnalyserEmission(): void`                          | 停止远端音频分析器并释放 AudioContext。 |
+| `startAnalyserEmission(): void`                         | 开始发送远端音频分析器数据（~60fps）。若远端音频轨道尚未到达，将自动延迟等待轨道订阅成功后开始发送。播放静音不影响分析数据，见下方“远端播放静音与音频可视化”。 |
+| `stopAnalyserEmission(): void`                          | 停止发送远端音频分析器数据。 |
 | `restartAnalyserEmission(): void`                        | 重启远端音频分析器链路。           |
-| `startLocalAnalyserEmission(): void`                     | 开始发送本地麦克风分析器数据（~60fps）。若麦克风尚未启动，将自动延迟等待 `startAudioCapture()` 成功后开始发送（轮询间隔100ms，最多等待10s）。 |
+| `startLocalAnalyserEmission(): void`                     | 开始发送本地麦克风分析器数据（~60fps）。采集前调用会在麦克风启动后生效；停止或重启可视化不影响音量查询与音频帧订阅。 |
 | `stopLocalAnalyserEmission(): void`                     | 停止本地麦克风分析器。             |
 | `restartLocalAnalyserEmission(): void`                  | 重启本地麦克风分析器链路。         |
+
+### 远端播放静音与音频可视化
+
+调用 `client.mute()` 仅将远端音频播放静音，不会停止远端音频分析。远端音轨正常接收且已开启 `startAnalyserEmission()` 时，`media:audio:analyserData` 仍会提供分析数据，因此远端音频电平、频谱和波形图仍可正常展示，并随实际接收到的音频信号变化。
+
+这些可视化反映接收到的音频信号，不代表扬声器正在发声。需要停止分析数据发送时，调用 `stopAnalyserEmission()`。
+
+### 本地麦克风音量与启动结果
+
+在点击等用户手势内调用 `startAudioCapture()`。方法只等待麦克风启用及 LiveKit 发布；成功后即可更新启用图标。开麦和音量读取不会自动开启本 SDK 的分析图。音量、PCM 和本地可视化是独立消费者：分别由 `startMicLevel()`、真实 `media:audio:frameData` 订阅和 `startLocalAnalyserEmission()` 开启。
+
+```ts
+await client.startAudioCapture();
+console.log('麦克风已启用', client.isAudioCapturing);
+
+// 只在业务明确需要音量时开启；成功后首次读取即为真实测量。
+try {
+  await client.startMicLevel();
+  console.log(client.getMicLevel()); // 0 是真实静音；不会用固定值掩盖不可用。
+} catch (error) {
+  // AbortError 表示等待被取消；采样故障不应触发推流清理。
+  console.warn('音量检测未就绪', error);
+}
+
+client.stopMicLevel(); // 只移除 RMS 消费者；麦克风推流继续。
+```
+
+`startMicLevel()` 可在开麦前登记需求并等待后续音轨，但不会申请权限或启动推流。没有音轨期间不创建采样资源、不启动就绪超时；请独立触发开麦，不要先等待检测再执行开麦。音轨可用后，SDK 负责最多约 2 秒的窗口准备，不要求用户说话，也无需预热、固定延时或重复开启。重复开启合并当前准备；检测已就绪时直接成功。
+
+`getMicLevel()` 同步只读，不初始化或恢复采样。检测未开启、无活动麦克风、准备中或不可用时返回 `null`；准备中本身不报告错误。`startMicLevel()` 成功后首次读取为真实 RMS，静音为 `0`。旧 `getMicrophoneAudioLevel()` 仅兼容转调新 getter，已弃用并将在 3.x 移除；迁移名称之外还需显式开启检测。getter 继续保留连接及销毁状态检查。
+
+每个 SDK Client 的三项本地麦克风消费者共用一个按需创建的 `AudioContext` 和输入 source，不与其他 Client、远端分析或 LiveKit 自有 context 共用；各自拥有独立分支。每次添加消费者确保共享资源存在，移除时只释放对应分支；最后一个消费者退出后释放共享图、定时任务及恢复监听。准备中的检测也是消费者。PCM 和可视化不依赖 RMS 开启或就绪，故障及启停不应反过来影响推流。无消费者时，本 SDK 不创建本地分析图；LiveKit 创建音轨时原生的一次性静音检测仍保留，不能据此宣称底层完全没有临时 AudioContext。
+
+音量准备超时或故障使 `startMicLevel()` 以 `AUDIO_INPUT_MONITORING_UNAVAILABLE` 拒绝，并通过既有非致命诊断报告；同一连续故障不重复通知。RMS 分支故障不停止其他健康分支，共享 context 故障才恢复共享图。关闭任意分析功能都不影响已成功发布的麦克风。权限或发布失败仍拒绝 `startAudioCapture()`；用启动结果与 `isAudioCapturing` 更新图标，不能把 `null` 或检测错误当作麦克风已关闭。
+
+### 麦克风停止、取消与采样恢复
+
+- 权限申请或发布尚未结束时，`stopAudioCapture()`、`disconnect()` 和 `dispose()` 立即撤销旧启动操作的使用权。被取消的启动 Promise 正常完成，但不发送麦克风启动事件，也不代表麦克风已启用；与停止操作并发时，以当前 `isAudioCapturing` 为准。
+- 浏览器权限弹窗不一定能被关闭。SDK 不等待未结束的权限请求；迟到返回的轨道立即停止且不再发布。发布中的轨道先在本地停止，迟到发布完成后由 SDK 针对旧轨道清理，不影响重新开启的麦克风。
+- 已发布麦克风的正常停止仍等待取消发布；取消发布失败继续拒绝 Promise，但 SDK 仍尝试停止本地轨道。连接清理的某一步失败不会跳过其余释放步骤。`dispose(): void` 同步撤销使用权并停止已知采集资源，其余异步释放在后台处理；它不保证网络断开、浏览器或系统设备释放已经完成。
+- 仅有明确消费需求且音轨可用时才准备或恢复分析图。暂停时优先恢复原 Context；共享图损坏时，每个连续故障最多自动重建一次，单次准备/恢复最多约 2 秒。仍失败后停止持续重试，后续可信交互或隐藏到可见可触发新的有界尝试，每秒最多一次。分支故障不以重建健康分支为代价；getter 不启动恢复。
+- `stopMicLevel()` 清除 RMS 意图并以 `AbortError` 取消尚未完成的开启等待。关麦、断连、音轨结束或替换同样取消当前等待并释放旧图，但保留 RMS 启用意图，后续业务再次开麦时自动恢复；销毁清除意图。已经拒绝的 Promise 不会复活。PCM 订阅和可视化各按自身生命周期处理；诊断恢复不代为开麦或切换设备。成功发布和启用状态不能代替有效音频发送验证。
+
+若 macOS 在退出 Chrome 后仍持续显示麦克风正在使用，记录浏览器/系统版本、实际加载的 SDK/LiveKit 版本、设备、相关进程和指示持续时间。浏览器的 AudioContext 设备/渲染错误、SDK 采样状态、RTC 发布状态及系统音频会话需要分别核对，不能仅凭图标认定 SDK 泄漏或仅凭单元测试认定设备问题已修复。
 
 ### 8.4 会话
 
@@ -494,13 +641,15 @@ SkyWalking 插件后续独立版本注册 `SDK_PERFORMANCE_METRICS_V1` 和/或 `
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `get isConnected(): boolean`                                               | 会话是否处于已连接态。                                                                  |
 | `get connectionSnapshot(): ConnectionSnapshot`                             | 同步只读快照：`http.connected`、`rtc.connected`、`rtc.hasVideoTrack`、`overall.state`。 |
-| `get sessionId(): string \| undefined`                                     | 服务器分配的会话 ID。**仅 Auth 模式**；Direct 模式下返回 `undefined` 并记录调试日志。   |
-| `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | 设置或更新性能指标上报回调。                                                            |
+| `get sessionId(): string \| undefined`                                     | Auth 保持服务端 ID 契约。自 2.7.0 起，Direct 在首次配置成功解析/应用后返回调用方 ID 或带 `sdk-` 前缀的自动标识，此前为 `undefined`；暂存不改变当前值（见 5.2）。   |
+| `setPerformanceMetricReporter(reporter?: PerformanceMetricReporter): void` | **已无作用，3.0.0 移除**；忽略回调、不创建检测器，保留销毁检查。                                                            |
 | `getPlaybackStatus(): Promise<PlaybackStatus>` | 当前连接、接收媒体 ICE/带有效期 RTT、各轨道接收指标、SDK 输出 FPS 和停顿；支持单轨，基础指标无需 debug。 |
 | `captureRemoteAvSyncDiagnostics(): Promise<AvSyncDiagnosticsSnapshot>`      | 主动采集远端音视频接收统计和本次连接的轨道生命周期节点；未配置 `debug` 也可调用。        |
-| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>`           | 读取当前有界上下文和一页 `avSyncLogs`。默认最近 5 分钟、200 条；通过 `range`、`pageSize` 和 `page.nextCursor` 分页。窗口事实摘要默认启用，可用 `includeSummary: false` 关闭；日志查询和摘要在 Dedicated Worker 执行。 |
+| `getAvSyncRawTelemetry(query?): Promise<RemoteAvSyncRawTelemetry>`           | 读取当前有界上下文和一页 `avSyncLogs`。默认最近 5 分钟、200 条；通过 `range`、`pageSize` 和 `page.nextCursor` 分页。窗口事实摘要默认启用，可用 `includeSummary: false` 关闭；Worker 可用时日志查询和摘要在 Dedicated Worker 执行，否则使用创建时无 Worker 的内存回退。 |
 | `getAvSyncAnalysis(query?): Promise<AvSyncAnalysisReport>` | 在 telemetry Worker 中异步分析完整保留窗口；调用方自行决定轮询周期。返回 `status`、`finding`、`features`、`layers` 和有界限制信息，不会因证据不足抛出异常；自动视频停滞通知不依赖调用此方法。 |
 | `get events(): PublicEmitterAPI`                                           | 仅 `on` / `off` / `once`。                                                              |
+
+以下描述适用于保留的直接 API 与旧 AV Sync 契约（新插件契约见 5.2）：诊断快照、原始遥测、分析报告、告警、session-ended 事件和留存诊断日志在有监控会话时都带 `clientInstanceId`、`monitoringSessionId`。诊断 `sessionId` 标识一次媒体诊断会话；旧日志和迟到分析保留原会话关联。`avsync.session.started` 日志通过 `correlation.avsyncSessionId` 关联监控会话与诊断会话。
 
 `getAvSyncAnalysis()` 的计数均是**请求分析窗口内的增量**，不会把浏览器 WebRTC 的累计 receiver counter 当作当前异常量。`features` 中的关键字段如下：
 
@@ -627,11 +776,11 @@ const evidence = await client.getAvSyncRawTelemetry({
   - **旧字段** `livekit` / `http` / `all` **已废弃**，保留以兼容历史消费方；其在 `sdk:disconnected` 路径上语义反转（断连后报 `true`），将在下个主版本中删除。
   - `allConnected`（与旧 `all`）的模式语义：`auth` 模式为 `livekitConnected && httpConnected`；`direct` 模式为 `livekitConnected`。
   - `reason`：透传自内层 `inner:sdk:disconnected.reason`。
-- **说明**：可与 `connectionSnapshot` 交叉校验。判定"已断开 → 可重连"应使用 `payload.allConnected === false`。
+- **说明**：`allConnected === false` 仅表示当前模式的整体连接条件未满足，不表示全部通道均已断开或手动重连一定允许；结合 `connectionSnapshot` 和重连后的当前状态判断。
 
 ### `sdk:error`
 
-- **触发时机**：内部错误经映射为对外安全负载时。
+- **触发时机**：SDK 报告错误或部分能力不可用时。应按 `code` 判断处理方式；`AUDIO_INPUT_MONITORING_UNAVAILABLE` 仅表示本地采样不可用，不代表麦克风推流失败。
 - **Payload**：`{ message: string; code: string }`（`code` 为 `ErrorCode` 字符串值）。
 
 ### `sdk:pluginFault`
@@ -656,14 +805,14 @@ const evidence = await client.getAvSyncRawTelemetry({
 
 ### `sdk:participant:disconnected`
 
-- **触发时机**：远端参与者离开 LiveKit 房间时。
+- **触发时机**：身份以 `renderer_` 开头的远端参与者离开 LiveKit 房间时。
 - **Payload**：`{ participantId: string }`。
 
 **视频**
 
 | 事件                       | 触发时机                                | Payload                            |
 | -------------------------- | --------------------------------------- | ---------------------------------- |
-| `media:video:available`    | 远端视频可用（首帧等语义由 RTC 层驱动） | `undefined`                        |
+| `media:video:available`    | 远端视频播放可用信号，不保证物理屏幕已呈现首帧 | `undefined`                        |
 | `media:video:unavailable`  | 远端视频不可用                          | `undefined`                        |
 | `media:video:trackAdded`   | 视频轨道添加                            | `undefined`（内部已做 track 去重） |
 | `media:video:trackRemoved` | 视频轨道移除                            | `undefined`                        |
@@ -683,7 +832,7 @@ const evidence = await client.getAvSyncRawTelemetry({
 | ---------------------------- | ------------ | ----------- |
 | `media:audio:captureStarted` | 本地输入开始 | `undefined` |
 | `media:audio:captureStopped` | 本地输入停止 | `undefined` |
-| `media:audio:frameData` | 原始音频帧数据 | `{ data: Float32Array; sampleRate: number }` |
+| `media:audio:frameData` | 原始音频帧数据；仅存在真实公开订阅时处理 PCM | `{ data: Float32Array; sampleRate: number }` |
 
 **本地麦克风分析器**
 
@@ -718,7 +867,7 @@ const evidence = await client.getAvSyncRawTelemetry({
 | `conversation:answer:chunk`     | 回答文本分片 | `{ questionId; rawDelta; rawText; representations; isComplete }`；deprecated `chunk === rawDelta` |
 | `conversation:answer:completed` | 单次回答结束 | `{ questionId; rawText; representations }`；deprecated `fullAnswer === rawText` |
 
-`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.5.0 继续返回且不输出 warning，只能在未来 major 删除。
+`representations` 是按插件成功安装顺序、setup 注册顺序排列的 JSON-safe 投影；相同 `mediaType` 不会互相覆盖。新代码只使用 `rawDelta` / `rawText`。旧字段在 2.8.0 继续返回且不输出 warning，只能在未来 major 删除。
 
 **会话控制**
 
@@ -731,7 +880,7 @@ const evidence = await client.getAvSyncRawTelemetry({
 ## 10. 完整使用示例
 
 ```ts
-import { createClient, type PerformanceMetricRecord, VERSION } from '@sanseng/liveavatar-js-sdk';
+import { createClient, SDK_PERFORMANCE_METRIC_V1, VERSION } from '@sanseng/liveavatar-js-sdk';
 
 console.log('SDK version:', VERSION);
 
@@ -746,9 +895,16 @@ async function main() {
     },
     http: { baseURL: 'https://your-api.example.com/s2/aigc/api/vih_dispatcher' },
     video: { containerElement: container, fitMode: 'contain' },
-    performanceMonitor: {
-      reporter: (m: PerformanceMetricRecord) => console.log('[perf]', m.metric, m.durationMs),
-    },
+    plugins: [{
+      id: 'performance-collector',
+      apiVersion: 1,
+      setup(registrar) {
+        registrar.observe(SDK_PERFORMANCE_METRIC_V1, {
+          id: 'individual-metrics',
+          handler: (metric) => console.log('[measurement]', metric.metric, metric.durationMs),
+        });
+      },
+    }],
   });
 
   client.setAuthToken('REPLACE_WITH_TOKEN_FROM_YOUR_BACKEND');
@@ -895,7 +1051,7 @@ client.updateGreenScreenOptions({
 
 ## 13. 错误代码
 
-以下为 `ErrorCode` 枚举（`src/errors/ErrorCodes.ts`）的字符串值，与 `sdk:error` 及抛出 `SDKError` 的 `code` 一致。
+以下为内部 `ErrorCode` 的字符串值，与 `sdk:error` 及抛出 `SDKError` 的 `code` 一致。`ErrorCode` 未从包根入口导出；业务应检查公开错误对象中的字符串 `code`。
 
 ### 13.1 HTTP 与控制面
 
@@ -937,18 +1093,17 @@ client.updateGreenScreenOptions({
 | 代码                                                                          | 说明与处理建议                                                       |
 | ----------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `AUDIO_CAPTURE_START_FAILED`                                                  | 麦克风启动失败；用户手势、HTTPS、权限。                              |
+| `AUDIO_INPUT_MONITORING_UNAVAILABLE` | 本地采样或音量检测不可用，麦克风推流继续；不要直接断开连接。 |
 | `AUDIO_CAPTURE_FAILED`                                                        | 采集中断。                                                           |
 | `AUDIO_INVALID_SAMPLE_RATE` / `AUDIO_INVALID_CHANNEL` / `AUDIO_INVALID_CODEC` | 参数与设备/协议不匹配。                                              |
 | `AUDIO_CONTROLLER_NOT_AVAILABLE`                                              | 控制器未创建或已释放。                                               |
-| `AUDIO_OUTPUT_DISABLED`                                                       | `output.enabled === false` 时访问 `getAudioElement()` 会抛出此错误。 |
+| `AUDIO_OUTPUT_DISABLED` | 音频输出被禁用时内部输出管线可能报告此错误；`getAudioElement()` 不是 `SDKClient` 公共方法。 |
 
 ### 13.5 视频 / 摄像头
 
 | 代码                              | 说明与处理建议       |
 | --------------------------------- | -------------------- |
 | `CAMERA_CONTROLLER_NOT_AVAILABLE` | 摄像头控制器不可用。 |
-| `VIDEO_LAYOUT_INVALID` | 显式 `videoLayout` 格式错误或不满足尺寸/alpha 契约；请在创建 client 前修正后端元数据。 |
-| `VIDEO_COMPOSITION_FAILED` | WebGL 透明合成无法初始化、解码尺寸与 packed 声明不符、纹理上传失败或 context 丢失。SDK 会隐藏 packed Canvas，绝不回退展示原始帧；请处理 `sdk:error` 并按需重建 client。 |
 
 ### 13.6 会话与状态机
 
@@ -981,7 +1136,13 @@ client.updateGreenScreenOptions({
 | `text_send_to_audio_response_ms`        | 文本发送到首段音频响应         |
 | `no_speech_report_to_audio_response_ms` | 无人声上报到音频响应           |
 
-记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`；首帧相关记录另有可选 `attemptId`）。
+记录结构：`PerformanceMetricRecord`（`metric`、`durationMs`、`startedAt`、`endedAt`、可选 `questionId`；首帧相关记录另有可选 `attemptId`）。已有监控会话时同时提供 `clientInstanceId` 和 `monitoringSessionId`，迟到结果沿用测量开始时的快照。
+
+连接阶段、连接失败/首帧超时、文本响应和文本到音频响应的 `durationMs` 使用 `performance.now()` 的单调差值。`startedAt` 是测量开始时读取的 Unix 毫秒时间戳，`endedAt = startedAt + durationMs`；系统时间前跳或回拨不会改变这些测量的耗时，也不会使同条记录的时间顺序倒置。保留小数毫秒，耗时以 `durationMs` 为准。
+
+这些时间戳表示以起点为锚的测量时间线。系统校时后，`endedAt` 可能与完成时的 `Date.now()` 不同；不要将其当作完成时独立采样的墙钟事实。不同测量各自读取新起点，跨测量不保证全局时间顺序。成功首帧终态批次复用首帧指标的结束时间；运行日志的发生时间仍遵循原有墙钟语义。
+
+`no_speech_report_to_audio_response_ms` 保留事件携带的墙钟起点及墙钟差值，仍可能受系统校时影响。当前未发现生产发送方或单调起点，本轮修复不覆盖该指标，也不保证其在正常会话中产生。
 
 ### 14.1a 分段首帧时间线
 
@@ -1003,30 +1164,37 @@ RTC 连接后，SDK 启动 10 秒首帧等待计时器。loadeddata、connect �
 
 ### 14.1b 终态批次与插件输入
 
-每个成功、connect 失败或首帧超时的 attempt 会生成一次只读 SDKPerformanceMetricsReport：schema 为 sdk.performance-metrics，schemaVersion 为 1，包含 attemptId、outcome、startedAt、endedAt 与只包含已观察指标的 metrics。SDK 根入口同时导出 detached Observer token SDK_PERFORMANCE_METRICS_V1。Observer 获得深拷贝且冻结的快照；SDK 不等待 handler，也不因插件 handler 的异常、拒绝或超时改变连接或媒体流程。
+每个成功、connect 失败或首帧超时的 attempt 会生成一次只读 SDKPerformanceMetricsReport：schema 为 sdk.performance-metrics，schemaVersion 为 1，包含 attemptId、可选 clientInstanceId/monitoringSessionId、outcome、startedAt、endedAt 与只包含已观察指标的 metrics。SDK 根入口同时导出 detached Observer token SDK_PERFORMANCE_METRICS_V1。Observer 获得深拷贝且冻结的快照；SDK 不等待 handler，也不因插件 handler 的异常、拒绝或超时改变连接或媒体流程。
 
-SDK 还会发送一条脱敏 Operational Log：category 为 media，event 为 performance.first-frame，correlation 只有 attemptId；attributes 只有 outcome、renderMode、timeout 场景下的 timeoutAfterRtcMs 和稀疏数值 nodes。该日志不包含 URL、token、连接配置、房间/轨道/参与者标识、文本、DataChannel 原文、媒体帧、DOM/LiveKit 对象、Error、message 或 stack。当前 SDK 不自动上传；后续 SkyWalking 或其他插件需在其自身独立版本中注册 observer 或匹配该日志，之后自行负责 setPerformance、reportFrameErrors、鉴权、重试和投递。
+SDK 还会发送一条脱敏 Operational Log：category 为 media，event 为 performance.first-frame，顶层带监控会话关联，correlation 只有 attemptId；attributes 只有 outcome、renderMode、timeout 场景下的 timeoutAfterRtcMs 和稀疏数值 nodes。该日志不包含 URL、token、连接配置、房间/轨道/参与者标识、文本、DataChannel 原文、媒体帧、DOM/LiveKit 对象、Error、message 或 stack。当前 SDK 不自动上传；插件需注册 observer 或匹配该日志，自行负责 setPerformance、reportFrameErrors、鉴权、重试和投递；SkyWalking 1.1.0 仍使用旧契约。
 
-### 14.2 自定义上报
+### 14.2 结构化测量结果与插件接入
+
+SDK 提供性能指标，插件负责接收并上传。`setPerformanceMetricReporter()`、`PerformanceMonitorOptions.reporter` 和 `PerformanceMetricReporter` 仅保留对外签名，现已无作用，将于 **3.0.0 移除**。回调不会执行，也不再输出默认 `[performance-metric]` Console 日志。这是旧 reporter 行为的明确变更。`performanceMonitor.enabled` 继续控制性能测量，默认开启。
+
+插件通过 `SDK_PERFORMANCE_METRIC_V1`（identity：`performance.metric`，major 1）消费逐条 `PerformanceMetricRecord`，包括阶段耗时和源事件发生时的会话响应耗时，无额外包装。当前实现校验指标名称、有限非负耗时、时间顺序及可选 `questionId` / `attemptId`；同一次派发的消费者共享一个深拷贝冻结快照。detached 分发使用微任务，不执行配置中的队列上限和溢出策略；handler 超时 30 秒并隔离故障贡献。此前文档承诺每消费者独立快照及上限 100 的丢弃队列，与现有实现不一致，依赖这些保证的插件存在兼容风险；本次仅记录差异，未更改插件契约或 SDK 实现。插件负责上传、重试和存储。
+
+`SDK_PERFORMANCE_METRICS_V1` 仍提供首帧终态批次，协议不变；同一首帧指标可能出现在两个出口，按用途选择以避免重复统计。现有输出卡顿检测仍由 `getPlaybackStatus()` 返回，不改变阈值，也不并入性能指标流。断开、销毁或新连接尝试清理待完成的会话测量，防止跨连接关联。
+
+音频响应耗时不代表声音实际播放的精确时刻，也不保证逐问题的音频归属。`no_speech_report_to_audio_response_ms` 不保证在正常会话中产生；缺失时不要填充为 `0`。
 
 ```ts
-import { createClient, type PerformanceMetricRecord } from '@sanseng/liveavatar-js-sdk';
+import { createClient, SDK_PERFORMANCE_METRIC_V1 } from '@sanseng/liveavatar-js-sdk';
 
 const client = createClient({
   connectConfig: { type: 'auth', config: { avatarId: 'demo' } },
-  performanceMonitor: {
-    reporter: (metric: PerformanceMetricRecord) => {
-      console.log('[perf]', metric.metric, `${metric.durationMs}ms`, metric.attemptId ?? metric.questionId);
+  plugins: [{
+    id: 'performance-collector',
+    apiVersion: 1,
+    setup(registrar) {
+      registrar.observe(SDK_PERFORMANCE_METRIC_V1, {
+        id: 'individual-metrics',
+        handler(metric) {
+          console.log('[measurement]', metric.metric, metric.durationMs, metric.attemptId ?? metric.questionId);
+        },
+      });
     },
-  },
-});
-```
-
-或在运行时：
-
-```ts
-client.setPerformanceMetricReporter((metric) => {
-  /* 上报 OTLP / 自建 */
+  }],
 });
 ```
 
@@ -1038,4 +1206,4 @@ client.setPerformanceMetricReporter((metric) => {
 
 ---
 
-_文档版本与包版本一致：2.5.0。_
+_文档版本与包版本一致：2.8.0。_
